@@ -1,0 +1,9 @@
+#ifndef OPERATION_FW_STATION_CONFIG_LOCAL_H
+#define OPERATION_FW_STATION_CONFIG_LOCAL_H
+
+#define FW_WIFI_SSID "twoja-siec"
+#define FW_WIFI_PASSWORD "twoje-haslo"
+#define FW_STOP_QUERY "Dworzec"
+#define FW_ENABLE_DEBUG 1
+
+#endif /* OPERATION_FW_STATION_CONFIG_LOCAL_H */

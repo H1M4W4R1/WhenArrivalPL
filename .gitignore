@@ -1,0 +1,4 @@
+.pio
+.pio/
+include/operation/fw_station_config_local.h
+.idea/
