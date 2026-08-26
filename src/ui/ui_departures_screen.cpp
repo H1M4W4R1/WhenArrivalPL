@@ -11,6 +11,8 @@ static const uint16_t color_gray = 0x7befu;
 static const uint16_t color_red = 0xf800u;
 static const uint16_t color_green = 0x07e0u;
 static const int16_t header_height = 42;
+static const int16_t picker_first_row_y = 54;
+static const int16_t picker_row_height = 34;
 }
 
 ui_departures_screen_t::ui_departures_screen_t(ui_display_t *const display) :
@@ -42,8 +44,8 @@ void ui_departures_screen_t::render_header(
         (void)snprintf(indicator, sizeof(indicator), "%s", "WiFi OFF");
     }
 
-    const int16_t indicator_x = static_cast<int16_t>(_display->width() - 76);
-    _display->draw_text(indicator_x, 16, indicator, indicator_color, 1u);
+    const int16_t indicator_x = static_cast<int16_t>(_display->width() - 128);
+    _display->draw_text(indicator_x, 13, indicator, indicator_color, 2u);
 }
 
 void ui_departures_screen_t::render_loading(
@@ -82,18 +84,24 @@ void ui_departures_screen_t::render_departures(
 
     for (size_t index = 0u; index < departures.count; ++index)
     {
-        const int16_t row_y = static_cast<int16_t>(52 + index * 26u);
+        const int16_t row_y = static_cast<int16_t>(52 + index * 34u);
+        if ((row_y + 20) >= _display->height())
+        {
+            break;
+        }
         const fw_departure_t &departure = departures.items[index];
-        const uint32_t remaining_seconds = departure.departure_epoch_s > now_epoch_s ?
-            departure.departure_epoch_s - now_epoch_s : 0u;
+        const uint32_t now_time_s = now_epoch_s % 86400u;
+        const uint32_t remaining_seconds = departure.departure_time_s >= now_time_s ?
+            departure.departure_time_s - now_time_s :
+            (86400u - now_time_s) + departure.departure_time_s;
         char remaining[12];
         (void)snprintf(remaining, sizeof(remaining), "%lum", static_cast<unsigned long>(remaining_seconds / 60u));
 
         _display->draw_text(8, row_y, departure.route_name, color_dark_blue, 2u);
-        _display->draw_text(62, row_y + 4, departure.headsign, color_black, 1u);
+        _display->draw_text(68, row_y, departure.headsign, color_black, 2u);
         _display->draw_text(
-            static_cast<int16_t>(_display->width() - 46), row_y + 4, remaining,
-            departure.is_realtime ? color_red : color_gray, 1u);
+            static_cast<int16_t>(_display->width() - 52), row_y,
+            remaining, departure.is_realtime ? color_red : color_gray, 2u);
     }
 }
 
@@ -121,6 +129,7 @@ void ui_departures_screen_t::render_city_picker(
 void ui_departures_screen_t::render_stop_picker(
     const fw_stop_list_t &stops,
     const size_t selected_index,
+    const size_t scroll_offset,
     const ui_network_status_t &network_status) const
 {
     if (_display == nullptr)
@@ -136,12 +145,42 @@ void ui_departures_screen_t::render_stop_picker(
         return;
     }
 
-    for (size_t index = 0u; index < stops.count; ++index)
+    const size_t visible_rows = stop_picker_visible_rows();
+    const size_t last_index = scroll_offset + visible_rows < stops.count ?
+        scroll_offset + visible_rows : stops.count;
+    for (size_t index = scroll_offset; index < last_index; ++index)
     {
-        const int16_t row_y = static_cast<int16_t>(54 + index * 34u);
+        const size_t visible_index = index - scroll_offset;
+        const int16_t row_y = static_cast<int16_t>(
+            picker_first_row_y + visible_index * static_cast<size_t>(picker_row_height));
         const uint16_t color = index == selected_index ? color_dark_blue : color_black;
         _display->draw_text(10, row_y, stops.items[index].name, color, 2u);
     }
+
+    if (scroll_offset > 0u)
+    {
+        _display->draw_text(
+            static_cast<int16_t>(_display->width() - 20), picker_first_row_y, "^", color_dark_blue, 2u);
+    }
+    if (last_index < stops.count)
+    {
+        const int16_t marker_y = static_cast<int16_t>(
+            picker_first_row_y + (visible_rows - 1u) * static_cast<size_t>(picker_row_height));
+        _display->draw_text(
+            static_cast<int16_t>(_display->width() - 20), marker_y, "v", color_dark_blue, 2u);
+    }
+}
+
+size_t ui_departures_screen_t::stop_picker_visible_rows() const
+{
+    if ((_display == nullptr) || (_display->height() <= picker_first_row_y))
+    {
+        return 1u;
+    }
+
+    const int16_t available_height = static_cast<int16_t>(_display->height() - picker_first_row_y);
+    const size_t visible_rows = static_cast<size_t>(available_height / picker_row_height);
+    return visible_rows > 0u ? visible_rows : 1u;
 }
 
 void ui_departures_screen_t::render_message(

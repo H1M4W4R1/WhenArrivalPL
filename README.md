@@ -8,7 +8,7 @@ Firmware tablicy najbliższych odjazdów dla ESP32 i ekranów dotykowych.
 2. Ustaw Wi-Fi; opcjonalnie ustaw `FW_STOP_QUERY`, aby zawęzić pobieraną listę przystanków.
 3. Zbuduj program: `pio run -e m5stack-cores3` albo `pio run -e m5stack-tab5`.
 
-Przytrzymaj ekran przez 3 sekundy, aby otworzyć listę miast. Puść ekran, stuknij miasto, a następnie stuknij przystanek pobrany po Wi-Fi. W prawym górnym rogu `WiFi -NN` oznacza połączenie i siłę sygnału w dBm; czerwone `WiFi OFF` oznacza brak sieci.
+Przytrzymaj ekran przez 3 sekundy, aby otworzyć listę miast. Puść ekran, stuknij miasto, a następnie stuknij przystanek pobrany po Wi-Fi. Listę przystanków przewija się ruchem palca góra–dół; pozostaje w pamięci do ponownego wyboru Gdańska. W prawym górnym rogu `WiFi -NN` oznacza połączenie i siłę sygnału w dBm; czerwone `WiFi OFF` oznacza brak sieci.
 
 ## Architektura
 

@@ -10,6 +10,7 @@ typedef enum
 {
     ui_stop_picker_event_none = 0,
     ui_stop_picker_event_opened,
+    ui_stop_picker_event_scrolled,
     ui_stop_picker_event_selected
 } ui_stop_picker_event_t;
 
@@ -23,11 +24,14 @@ public:
         int16_t touch_y,
         uint32_t now_ms,
         size_t item_count,
-        int16_t row_height);
+        int16_t row_height,
+        int16_t first_row_y,
+        size_t visible_row_count);
     void reset();
     void open();
     bool is_open() const;
     size_t selected_index() const;
+    size_t scroll_offset() const;
     void select_next(size_t item_count);
     void select_previous(size_t item_count);
 
@@ -36,8 +40,10 @@ private:
     bool _was_touched;
     bool _ignore_release;
     uint32_t _touch_started_ms;
+    int16_t _touch_start_y;
     int16_t _last_touch_y;
     size_t _selected_index;
+    size_t _scroll_offset;
 };
 
 #endif /* UI_UI_STOP_PICKER_H */

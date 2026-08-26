@@ -21,6 +21,7 @@ char station_name[fw_stop_name_max_length]{};
 uint32_t last_refresh_ms = 0u;
 bool shows_picker = false;
 bool has_selected_stop = false;
+bool has_gdansk_stops_cache = false;
 const fw_city_config_t *city_configs = nullptr;
 const char *city_names[5u]{};
 size_t city_count = 0u;
@@ -67,6 +68,11 @@ void refresh_departures()
 
 fw_result_t load_gdansk_stops()
 {
+    if (has_gdansk_stops_cache)
+    {
+        return fw_result_ok;
+    }
+
     if (!sys_platform_network_is_ready())
     {
         return fw_result_network_error;
@@ -79,6 +85,10 @@ fw_result_t load_gdansk_stops()
         message, sizeof(message), "Przystanki: wynik=%d, liczba=%u, filtr=%s",
         static_cast<int>(result), static_cast<unsigned int>(available_stops.count), FW_STOP_QUERY);
     debug_log(message);
+    if (result == fw_result_ok)
+    {
+        has_gdansk_stops_cache = true;
+    }
     return result;
 }
 }
@@ -112,9 +122,12 @@ void loop()
     const size_t picker_item_count = picker_stage == app_picker_stage_city ?
         city_count : available_stops.count;
     const int16_t picker_row_height = 34;
+    const int16_t picker_first_row_y = 54;
+    const size_t picker_visible_rows = picker_stage == app_picker_stage_city ?
+        city_count : departures_screen.stop_picker_visible_rows();
     const ui_stop_picker_event_t picker_event = stop_picker.update_touch(
         sys_platform_is_touched(), sys_platform_touch_y(), now_ms, picker_item_count,
-        picker_row_height);
+        picker_row_height, picker_first_row_y, picker_visible_rows);
 
     if (picker_event == ui_stop_picker_event_opened)
     {
@@ -138,7 +151,8 @@ void loop()
                 if (stop_result == fw_result_ok)
                 {
                     departures_screen.render_stop_picker(
-                        available_stops, 0u, network_status());
+                        available_stops, stop_picker.selected_index(), stop_picker.scroll_offset(),
+                        network_status());
                     shows_picker = available_stops.count > 0u;
                     if (shows_picker)
                     {
@@ -185,6 +199,13 @@ void loop()
             shows_picker = false;
             stop_picker.reset();
         }
+    }
+
+    if ((picker_event == ui_stop_picker_event_scrolled) &&
+        (picker_stage == app_picker_stage_stop) && shows_picker)
+    {
+        departures_screen.render_stop_picker(
+            available_stops, stop_picker.selected_index(), stop_picker.scroll_offset(), network_status());
     }
 
     if (has_selected_stop && !shows_picker && ((now_ms - last_refresh_ms) >= 30000u))

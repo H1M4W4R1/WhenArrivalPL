@@ -32,7 +32,9 @@ public:
     void render_stop_picker(
         const fw_stop_list_t &stops,
         size_t selected_index,
+        size_t scroll_offset,
         const ui_network_status_t &network_status) const;
+    size_t stop_picker_visible_rows() const;
     void render_message(
         const char *title,
         const char *message,

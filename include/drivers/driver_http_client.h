@@ -10,7 +10,8 @@
 typedef fw_result_t (*driver_http_data_callback_t)(
     const uint8_t *data,
     size_t data_length,
-    void *user_context);
+    void *user_context,
+    bool *transfer_complete);
 
 class driver_http_client_t
 {

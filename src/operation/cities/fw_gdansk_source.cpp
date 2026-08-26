@@ -13,8 +13,8 @@
 
 namespace
 {
-static StaticJsonDocument<8192u> response_document;
 static StaticJsonDocument<1024u> stop_document;
+static StaticJsonDocument<1024u> departure_document;
 static const char stops_url[] =
     "https://ckan.multimediagdansk.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/"
     "resource/d3e96eb6-25ad-4d6c-8651-b1eb39155945/download/stopsingdansk.json";
@@ -39,6 +39,24 @@ typedef struct
 /* One blocking HTTP transfer runs in the foreground, so module storage avoids
  * putting the JSON object buffer on the firmware task stack. */
 static gdansk_stop_parser_t stop_parser;
+
+typedef struct
+{
+    fw_departure_list_t *departures;
+    bool has_departures_key;
+    bool is_in_departures;
+    bool is_capturing_object;
+    bool is_in_string;
+    bool is_escape_sequence;
+    bool object_overflow;
+    uint8_t key_match_length;
+    uint16_t object_depth;
+    size_t object_length;
+    char object_buffer[768u];
+} gdansk_departure_parser_t;
+
+static const char departures_key[] = "\"departures\"";
+static gdansk_departure_parser_t departure_parser;
 
 bool copy_text(char *const destination, const size_t destination_size, const char *const source)
 {
@@ -133,13 +151,15 @@ void parse_stop_object(gdansk_stop_parser_t *const parser)
 fw_result_t process_stop_data(
     const uint8_t *const data,
     const size_t data_length,
-    void *const user_context)
+    void *const user_context,
+    bool *const transfer_complete)
 {
-    if ((data == nullptr) || (user_context == nullptr))
+    if ((data == nullptr) || (user_context == nullptr) || (transfer_complete == nullptr))
     {
         return fw_result_invalid_argument;
     }
 
+    *transfer_complete = false;
     gdansk_stop_parser_t *const parser = static_cast<gdansk_stop_parser_t *>(user_context);
     for (size_t index = 0u; index < data_length; ++index)
     {
@@ -224,6 +244,11 @@ fw_result_t process_stop_data(
             {
                 parse_stop_object(parser);
                 parser->is_capturing_object = false;
+                if (parser->stops->count >= fw_stop_capacity)
+                {
+                    *transfer_complete = true;
+                    return fw_result_ok;
+                }
             }
         }
     }
@@ -231,48 +256,173 @@ fw_result_t process_stop_data(
     return fw_result_ok;
 }
 
-bool parse_iso8601_utc(const char *const text, uint32_t *const epoch_s)
+bool parse_departure_time(const char *const text, uint32_t *const departure_time_s)
 {
-    int year = 0;
-    int month = 0;
-    int day = 0;
     int hour = 0;
     int minute = 0;
     int second = 0;
-    const int item_count = sscanf(text, "%d-%d-%dT%d:%d:%d", &year, &month, &day, &hour, &minute, &second);
+    if ((text == nullptr) || (departure_time_s == nullptr))
+    {
+        return false;
+    }
 
-    if ((item_count < 5) || (epoch_s == nullptr) || (month < 1) || (month > 12) ||
-        (day < 1) || (day > 31) || (hour < 0) || (hour > 23) ||
+    /* Live departures are meaningful by clock time. Deliberately skip the
+     * date part because the feed's calendar year can be stale. */
+    const int item_count = sscanf(text, "%*d-%*d-%*dT%d:%d:%d", &hour, &minute, &second);
+    if ((item_count < 2) || (hour < 0) || (hour > 23) ||
         (minute < 0) || (minute > 59) || (second < 0) || (second > 59))
     {
         return false;
     }
 
-    const int adjusted_year = year - (month <= 2 ? 1 : 0);
-    const int era = (adjusted_year >= 0 ? adjusted_year : adjusted_year - 399) / 400;
-    const unsigned int year_of_era = static_cast<unsigned int>(adjusted_year - era * 400);
-    const unsigned int adjusted_month = static_cast<unsigned int>(month + (month > 2 ? -3 : 9));
-    const unsigned int day_of_year = (153u * adjusted_month + 2u) / 5u +
-                                     static_cast<unsigned int>(day - 1);
-    const unsigned int day_of_era = year_of_era * 365u + year_of_era / 4u -
-                                    year_of_era / 100u + day_of_year;
-    const int32_t days_since_epoch = era * 146097 + static_cast<int32_t>(day_of_era) - 719468;
+    *departure_time_s = static_cast<uint32_t>(hour) * 3600u +
+                        static_cast<uint32_t>(minute) * 60u + static_cast<uint32_t>(second);
+    return true;
+}
 
-    if (days_since_epoch < 0)
+void parse_departure_object(gdansk_departure_parser_t *const parser)
+{
+    if ((parser == nullptr) || (parser->departures == nullptr) || parser->object_overflow ||
+        (parser->departures->count >= fw_departure_capacity))
     {
-        return false;
+        return;
     }
 
-    *epoch_s = static_cast<uint32_t>(days_since_epoch) * 86400u +
-               static_cast<uint32_t>(hour) * 3600u + static_cast<uint32_t>(minute) * 60u +
-               static_cast<uint32_t>(second);
-    return true;
+    parser->object_buffer[parser->object_length] = '\0';
+    departure_document.clear();
+    if (deserializeJson(departure_document, parser->object_buffer))
+    {
+        return;
+    }
+
+    const JsonObject source_departure = departure_document.as<JsonObject>();
+    const char *const route_name = source_departure["routeShortName"] | "?";
+    const char *const headsign = source_departure["headsign"] | "Brak kierunku";
+    const char *const departure_time = source_departure["estimatedTime"] | "";
+    fw_departure_t &departure = parser->departures->items[parser->departures->count];
+    if (!copy_text(departure.route_name, sizeof(departure.route_name), route_name) ||
+        !copy_text(departure.headsign, sizeof(departure.headsign), headsign) ||
+        !parse_departure_time(departure_time, &departure.departure_time_s))
+    {
+        return;
+    }
+
+    departure.delay_s = source_departure["delayInSeconds"] | 0;
+    departure.is_realtime = strcmp(source_departure["status"] | "", "REALTIME") == 0;
+    ++parser->departures->count;
+}
+
+fw_result_t process_departure_data(
+    const uint8_t *const data,
+    const size_t data_length,
+    void *const user_context,
+    bool *const transfer_complete)
+{
+    if ((data == nullptr) || (user_context == nullptr) || (transfer_complete == nullptr))
+    {
+        return fw_result_invalid_argument;
+    }
+
+    *transfer_complete = false;
+    gdansk_departure_parser_t *const parser = static_cast<gdansk_departure_parser_t *>(user_context);
+    for (size_t index = 0u; index < data_length; ++index)
+    {
+        const char character = static_cast<char>(data[index]);
+        if (!parser->has_departures_key)
+        {
+            if (character == departures_key[parser->key_match_length])
+            {
+                ++parser->key_match_length;
+                if (parser->key_match_length == (sizeof(departures_key) - 1u))
+                {
+                    parser->has_departures_key = true;
+                }
+            }
+            else
+            {
+                parser->key_match_length = character == departures_key[0u] ? 1u : 0u;
+            }
+            continue;
+        }
+
+        if (!parser->is_in_departures)
+        {
+            if (character == '[')
+            {
+                parser->is_in_departures = true;
+            }
+            continue;
+        }
+
+        if (!parser->is_capturing_object)
+        {
+            if (character == '{')
+            {
+                parser->is_capturing_object = true;
+                parser->is_in_string = false;
+                parser->is_escape_sequence = false;
+                parser->object_overflow = false;
+                parser->object_depth = 1u;
+                parser->object_length = 0u;
+                parser->object_buffer[parser->object_length++] = character;
+            }
+            continue;
+        }
+
+        if ((parser->object_length + 1u) < sizeof(parser->object_buffer))
+        {
+            parser->object_buffer[parser->object_length++] = character;
+        }
+        else
+        {
+            parser->object_overflow = true;
+        }
+
+        if (parser->is_in_string)
+        {
+            if (parser->is_escape_sequence)
+            {
+                parser->is_escape_sequence = false;
+            }
+            else if (character == '\\')
+            {
+                parser->is_escape_sequence = true;
+            }
+            else if (character == '"')
+            {
+                parser->is_in_string = false;
+            }
+        }
+        else if (character == '"')
+        {
+            parser->is_in_string = true;
+        }
+        else if (character == '{')
+        {
+            ++parser->object_depth;
+        }
+        else if (character == '}')
+        {
+            --parser->object_depth;
+            if (parser->object_depth == 0u)
+            {
+                parse_departure_object(parser);
+                parser->is_capturing_object = false;
+                if (parser->departures->count >= fw_departure_capacity)
+                {
+                    *transfer_complete = true;
+                    return fw_result_ok;
+                }
+            }
+        }
+    }
+
+    return fw_result_ok;
 }
 }
 
 fw_gdansk_source_t::fw_gdansk_source_t(driver_http_client_t *const http_client) :
-    _http_client(http_client),
-    _response_buffer{}
+    _http_client(http_client)
 {
 }
 
@@ -315,46 +465,8 @@ fw_result_t fw_gdansk_source_t::get_departures(
         return fw_result_buffer_too_small;
     }
 
-    size_t response_length = 0u;
-    const fw_result_t http_result = _http_client->get(
-        url, _response_buffer, sizeof(_response_buffer), &response_length);
-    if (http_result != fw_result_ok)
-    {
-        return http_result;
-    }
-
-    response_document.clear();
-    const DeserializationError error = deserializeJson(
-        response_document, _response_buffer, response_length);
-    if (error)
-    {
-        return fw_result_parse_error;
-    }
-
     departures->count = 0u;
-    const JsonArray source_departures = response_document["departures"].as<JsonArray>();
-    for (JsonObject source_departure : source_departures)
-    {
-        if (departures->count >= fw_departure_capacity)
-        {
-            break;
-        }
-
-        const char *const route_name = source_departure["routeShortName"] | "?";
-        const char *const headsign = source_departure["headsign"] | "Brak kierunku";
-        const char *const departure_time = source_departure["estimatedTime"] | "";
-        fw_departure_t &departure = departures->items[departures->count];
-        if (!copy_text(departure.route_name, sizeof(departure.route_name), route_name) ||
-            !copy_text(departure.headsign, sizeof(departure.headsign), headsign) ||
-            !parse_iso8601_utc(departure_time, &departure.departure_epoch_s))
-        {
-            continue;
-        }
-
-        departure.delay_s = source_departure["delayInSeconds"] | 0;
-        departure.is_realtime = strcmp(source_departure["status"] | "", "REALTIME") == 0;
-        ++departures->count;
-    }
-
-    return fw_result_ok;
+    departure_parser = {};
+    departure_parser.departures = departures;
+    return _http_client->get_stream(url, process_departure_data, &departure_parser);
 }

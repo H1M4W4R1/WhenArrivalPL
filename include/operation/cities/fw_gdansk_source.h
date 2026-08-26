@@ -18,7 +18,6 @@ public:
 
 private:
     driver_http_client_t *_http_client;
-    char _response_buffer[12288u];
 };
 
 #endif /* OPERATION_CITIES_FW_GDANSK_SOURCE_H */

@@ -224,7 +224,9 @@ public:
                 return fw_result_network_error;
             }
 
-            const fw_result_t callback_result = callback(buffer, read_count, user_context);
+            bool transfer_complete = false;
+            const fw_result_t callback_result = callback(
+                buffer, read_count, user_context, &transfer_complete);
             if (callback_result != fw_result_ok)
             {
                 log_http_failure(
@@ -233,6 +235,12 @@ public:
                     static_cast<int>(callback_result));
                 client.end();
                 return callback_result;
+            }
+
+            if (transfer_complete)
+            {
+                client.end();
+                return fw_result_ok;
             }
 
             last_data_ms = millis();

@@ -23,7 +23,9 @@ typedef struct
 {
     char route_name[fw_route_name_max_length];
     char headsign[fw_headsign_max_length];
-    uint32_t departure_epoch_s;
+    /* Seconds since midnight. The TRISTAR calendar year is not reliable
+     * for a live board, so departures are compared by time of day. */
+    uint32_t departure_time_s;
     int32_t delay_s;
     bool is_realtime;
 } fw_departure_t;
