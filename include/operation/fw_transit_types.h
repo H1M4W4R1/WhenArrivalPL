@@ -11,7 +11,7 @@ static const size_t fw_stop_id_max_length = 32u;
 static const size_t fw_route_name_max_length = 16u;
 static const size_t fw_headsign_max_length = 56u;
 static const size_t fw_departure_capacity = 12u;
-static const size_t fw_stop_capacity = 24u;
+static const size_t fw_stop_capacity = 255u;
 
 typedef struct
 {

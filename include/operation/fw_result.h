@@ -10,7 +10,8 @@ typedef enum
     fw_result_network_error,
     fw_result_parse_error,
     fw_result_not_supported,
-    fw_result_buffer_too_small
+    fw_result_buffer_too_small,
+    fw_result_out_of_memory
 } fw_result_t;
 
 #endif /* OPERATION_FW_RESULT_H */

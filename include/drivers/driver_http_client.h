@@ -26,7 +26,8 @@ public:
     virtual fw_result_t get_stream(
         const char *url,
         driver_http_data_callback_t callback,
-        void *user_context) = 0;
+        void *user_context,
+        uint32_t idle_timeout_ms = 5000u) = 0;
 };
 
 #endif /* DRIVERS_DRIVER_HTTP_CLIENT_H */

@@ -1,6 +1,7 @@
 #include "ui/ui_departures_screen.h"
 
 #include <stdio.h>
+#include <string.h>
 
 namespace
 {
@@ -13,6 +14,23 @@ static const uint16_t color_green = 0x07e0u;
 static const int16_t header_height = 42;
 static const int16_t picker_first_row_y = 54;
 static const int16_t picker_row_height = 34;
+
+void draw_button(
+    ui_display_t *const display,
+    const ui_rectangle_t &rectangle,
+    const char *const text,
+    const uint16_t color)
+{
+    if ((display == nullptr) || (text == nullptr))
+    {
+        return;
+    }
+
+    display->fill_rectangle(rectangle, color);
+    display->draw_text(
+        static_cast<int16_t>(rectangle.x + 4), static_cast<int16_t>(rectangle.y + 4),
+        text, color_white, 2u);
+}
 }
 
 ui_departures_screen_t::ui_departures_screen_t(ui_display_t *const display) :
@@ -169,6 +187,86 @@ void ui_departures_screen_t::render_stop_picker(
         _display->draw_text(
             static_cast<int16_t>(_display->width() - 20), marker_y, "v", color_dark_blue, 2u);
     }
+}
+
+void ui_departures_screen_t::render_stop_search(
+    const char *const query,
+    const bool has_full_keyboard,
+    const ui_network_status_t &network_status) const
+{
+    if ((_display == nullptr) || (query == nullptr))
+    {
+        return;
+    }
+
+    _display->fill_screen(color_white);
+    render_header("Szukaj przystanku", network_status);
+    _display->draw_text(8, 52, query[0u] == '\0' ? "Wpisz nazwe" : query, color_black, 2u);
+
+    if (has_full_keyboard)
+    {
+        static const char *const rows[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM_"};
+        const int16_t keyboard_top = static_cast<int16_t>(_display->height() / 3);
+        const int16_t row_height = static_cast<int16_t>((_display->height() - keyboard_top - 54) / 3);
+        for (uint8_t row = 0u; row < 3u; ++row)
+        {
+            const size_t key_count = strlen(rows[row]);
+            const int16_t key_width = static_cast<int16_t>(_display->width() / key_count);
+            for (size_t key = 0u; key < key_count; ++key)
+            {
+                char label[2u] = {rows[row][key], '\0'};
+                draw_button(
+                    _display,
+                    {static_cast<int16_t>(key * static_cast<size_t>(key_width)),
+                     static_cast<int16_t>(keyboard_top + row * row_height), key_width,
+                     row_height},
+                    label,
+                    color_dark_blue);
+            }
+        }
+        const int16_t action_y = static_cast<int16_t>(_display->height() - 50);
+        const int16_t action_width = static_cast<int16_t>(_display->width() / 3);
+        draw_button(_display, {0, action_y, action_width, 50}, "WROC", color_gray);
+        draw_button(_display, {action_width, action_y, action_width, 50}, "USUN", color_gray);
+        draw_button(
+            _display,
+            {static_cast<int16_t>(2 * action_width), action_y,
+             static_cast<int16_t>(_display->width() - 2 * action_width), 50},
+            "SZUKAJ", color_green);
+        return;
+    }
+
+    static const char *const phone_labels[] =
+    {
+        "0 _", "2 ABC", "3 DEF", "4 GHI", "5 JKL", "6 MNO", "7 PQRS", "8 TUV", "9 WXYZ"
+    };
+    const int16_t keyboard_top = 76;
+    const int16_t action_height = 34;
+    const int16_t keypad_height = static_cast<int16_t>(_display->height() - keyboard_top - action_height);
+    const int16_t key_width = static_cast<int16_t>(_display->width() / 3);
+    const int16_t key_height = static_cast<int16_t>(keypad_height / 3);
+    for (uint8_t row = 0u; row < 3u; ++row)
+    {
+        for (uint8_t column = 0u; column < 3u; ++column)
+        {
+            const uint8_t key = static_cast<uint8_t>(row * 3u + column);
+            draw_button(
+                _display,
+                {static_cast<int16_t>(column * key_width),
+                 static_cast<int16_t>(keyboard_top + row * key_height), key_width, key_height},
+                phone_labels[key],
+                color_dark_blue);
+        }
+    }
+    const int16_t action_y = static_cast<int16_t>(_display->height() - action_height);
+    const int16_t action_width = static_cast<int16_t>(_display->width() / 3);
+    draw_button(_display, {0, action_y, action_width, action_height}, "WROC", color_gray);
+    draw_button(_display, {action_width, action_y, action_width, action_height}, "USUN", color_gray);
+    draw_button(
+        _display,
+        {static_cast<int16_t>(2 * action_width), action_y,
+         static_cast<int16_t>(_display->width() - 2 * action_width), action_height},
+        "SZUK", color_green);
 }
 
 size_t ui_departures_screen_t::stop_picker_visible_rows() const

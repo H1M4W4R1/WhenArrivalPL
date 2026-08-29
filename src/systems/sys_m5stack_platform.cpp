@@ -4,9 +4,13 @@
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC diagnostic ignored "-Wshadow"
 #pragma GCC diagnostic ignored "-Wundef"
+#include <SPI.h>
+#include <SD.h>
 #include <HTTPClient.h>
 #include <M5Unified.h>
 #include <WiFi.h>
+#include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 #include <time.h>
 #pragma GCC diagnostic pop
 
@@ -17,6 +21,96 @@
 
 namespace
 {
+static const size_t wifi_ssid_max_length = 33u;
+static const size_t wifi_password_max_length = 65u;
+static const size_t provider_url_max_length = 128u;
+
+typedef struct
+{
+    char wifi_ssid[wifi_ssid_max_length];
+    char wifi_password[wifi_password_max_length];
+    char provider_url[provider_url_max_length];
+} sys_provider_config_t;
+
+static sys_provider_config_t provider_config{};
+static StaticJsonDocument<512u> config_document;
+
+bool copy_config_value(char *const destination, const size_t destination_size, const char *const source)
+{
+    if ((destination == nullptr) || (destination_size == 0u) || (source == nullptr) ||
+        (source[0u] == '\0'))
+    {
+        return false;
+    }
+
+    const int written = snprintf(destination, destination_size, "%s", source);
+    return (written >= 0) && (static_cast<size_t>(written) < destination_size);
+}
+
+void load_compile_time_config()
+{
+    (void)copy_config_value(
+        provider_config.wifi_ssid, sizeof(provider_config.wifi_ssid), SECRETS_WIFI_SSID);
+    (void)copy_config_value(
+        provider_config.wifi_password, sizeof(provider_config.wifi_password), SECRETS_WIFI_PASSWORD);
+    (void)copy_config_value(
+        provider_config.provider_url, sizeof(provider_config.provider_url), SECRETS_PROVIDER_URL);
+}
+
+bool initialize_sd_card()
+{
+    if (!M5.hasSD())
+    {
+        return false;
+    }
+
+    const int8_t clock_pin = M5.getPin(m5::sd_spi_sclk);
+    const int8_t miso_pin = M5.getPin(m5::sd_spi_miso);
+    const int8_t mosi_pin = M5.getPin(m5::sd_spi_mosi);
+    const int8_t chip_select_pin = M5.getPin(m5::sd_spi_cs);
+    if ((clock_pin < 0) || (miso_pin < 0) || (mosi_pin < 0) || (chip_select_pin < 0))
+    {
+        return false;
+    }
+
+    SPI.begin(clock_pin, miso_pin, mosi_pin, chip_select_pin);
+    return SD.begin(static_cast<uint8_t>(chip_select_pin), SPI, 25000000u);
+}
+
+void load_sd_card_config()
+{
+    if (!initialize_sd_card())
+    {
+        sys_platform_debug_log("SD: brak karty lub inicjalizacja nieudana");
+        return;
+    }
+
+    File config_file = SD.open("/config.json", FILE_READ);
+    if (!config_file)
+    {
+        sys_platform_debug_log("SD: brak /config.json");
+        return;
+    }
+
+    config_document.clear();
+    const DeserializationError error = deserializeJson(config_document, config_file);
+    config_file.close();
+    if (error)
+    {
+        sys_platform_debug_log("SD: config.json ma bledny JSON");
+        return;
+    }
+
+    const JsonObject wifi = config_document["wifi"].as<JsonObject>();
+    (void)copy_config_value(
+        provider_config.wifi_ssid, sizeof(provider_config.wifi_ssid), wifi["ssid"] | "");
+    (void)copy_config_value(
+        provider_config.wifi_password, sizeof(provider_config.wifi_password), wifi["password"] | "");
+    (void)copy_config_value(
+        provider_config.provider_url, sizeof(provider_config.provider_url),
+        config_document["provider_url"] | "");
+}
+
 const char *http_error_name(const int status_code)
 {
     switch (status_code)
@@ -174,7 +268,8 @@ public:
     fw_result_t get_stream(
         const char *const url,
         const driver_http_data_callback_t callback,
-        void *const user_context) override
+        void *const user_context,
+        const uint32_t idle_timeout_ms) override
     {
         if ((url == nullptr) || (callback == nullptr))
         {
@@ -204,7 +299,7 @@ public:
             const size_t available = stream->available();
             if (available == 0u)
             {
-                if ((millis() - last_data_ms) >= 5000u)
+                if ((idle_timeout_ms > 0u) && ((millis() - last_data_ms) >= idle_timeout_ms))
                 {
                     log_http_failure("get_stream", "idle_timeout", 0);
                     client.end();
@@ -263,14 +358,18 @@ void sys_platform_initialize(void)
     M5.begin(configuration);
     M5.Display.setRotation(1);
 
-    if (strlen(FW_WIFI_SSID) == 0u)
+    provider_config = {};
+    load_compile_time_config();
+    load_sd_card_config();
+
+    if (provider_config.wifi_ssid[0u] == '\0')
     {
         sys_platform_debug_log("WiFi: brak konfiguracji");
         return;
     }
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(FW_WIFI_SSID, FW_WIFI_PASSWORD);
+    WiFi.begin(provider_config.wifi_ssid, provider_config.wifi_password);
     const uint32_t connection_started_ms = millis();
     while ((WiFi.status() != WL_CONNECTED) && ((millis() - connection_started_ms) < 15000u))
     {
@@ -299,6 +398,20 @@ ui_display_t *sys_platform_display(void)
 driver_http_client_t *sys_platform_http_client(void)
 {
     return &http_client;
+}
+
+const char *sys_platform_provider_url(void)
+{
+    return provider_config.provider_url;
+}
+
+bool sys_platform_has_full_keyboard(void)
+{
+#if defined(FW_PLATFORM_TAB5)
+    return true;
+#else
+    return false;
+#endif
 }
 
 bool sys_platform_is_touched(void)
@@ -353,4 +466,14 @@ uint32_t sys_platform_epoch_s(void)
 {
     const time_t now = time(nullptr);
     return now > 0 ? static_cast<uint32_t>(now) : 0u;
+}
+
+void *sys_platform_allocate_psram(const size_t size)
+{
+    if (size == 0u)
+    {
+        return nullptr;
+    }
+
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 }

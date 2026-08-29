@@ -13,21 +13,11 @@ typedef enum
     fw_city_poznan
 } fw_city_t;
 
-typedef enum
-{
-    fw_feed_warsaw_api = 0,
-    fw_feed_gtfs_realtime,
-    fw_feed_tristar_json,
-    fw_feed_gtfs_static
-} fw_feed_kind_t;
-
 typedef struct
 {
     fw_city_t city;
     const char *name;
-    fw_feed_kind_t feed_kind;
-    const char *official_url;
-    bool requires_api_key;
+    const char *provider_slug;
 } fw_city_config_t;
 
 const fw_city_config_t *fw_city_catalogue_get(size_t *city_count);

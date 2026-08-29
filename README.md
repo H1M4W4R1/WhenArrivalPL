@@ -1,36 +1,63 @@
 # MojaStacja
 
-Firmware tablicy najbliższych odjazdów dla ESP32 i ekranów dotykowych.
+Firmware tablicy najbliższych odjazdów dla ESP32 i ekranów dotykowych. Dane pobiera wyłącznie z lokalnego serwera [IOT Open API](../IOTOpenAPI/README.md); płyta nie łączy się bezpośrednio z publicznymi serwisami komunikacji.
 
-## Uruchomienie — 2 minuty
+## Uruchomienie — 5 minut
 
-1. Skopiuj `include/operation/fw_station_config_local.h.example` jako `include/operation/fw_station_config_local.h`.
-2. Ustaw Wi-Fi; opcjonalnie ustaw `FW_STOP_QUERY`, aby zawęzić pobieraną listę przystanków.
-3. Zbuduj program: `pio run -e m5stack-cores3` albo `pio run -e m5stack-tab5`.
+1. Uruchom serwer w sieci lokalnej, np. `iot-open-api --provider gdansk`.
+2. Wybierz konfigurację: skopiuj `include/secrets.h.example` jako `include/secrets.h` **albo** umieść `config.json` w katalogu głównym karty microSD.
+3. Ustaw Wi-Fi i adres serwera zgodnie z przykładem poniżej.
+4. Zbuduj program: `pio run -e m5stack-cores3` albo `pio run -e m5stack-tab5`.
+5. Przytrzymaj ekran przez 3 sekundy, wybierz miasto, wpisz fragment nazwy przystanku i stuknij `SZUKAJ`.
 
-Przytrzymaj ekran przez 3 sekundy, aby otworzyć listę miast. Puść ekran, stuknij miasto, a następnie stuknij przystanek pobrany po Wi-Fi. Listę przystanków przewija się ruchem palca góra–dół; pozostaje w pamięci do ponownego wyboru Gdańska. W prawym górnym rogu `WiFi -NN` oznacza połączenie i siłę sygnału w dBm; czerwone `WiFi OFF` oznacza brak sieci.
+`include/secrets.h` jest ignorowany przez Git. Gdy oba źródła istnieją, niepuste pola z `/config.json` zastępują wartości z `secrets.h`.
+
+## Konfiguracja
+
+`include/secrets.h` zawiera te same trzy wartości i jest wygodny podczas programowania:
+
+```cpp
+#define SECRETS_WIFI_SSID "moja-siec"
+#define SECRETS_WIFI_PASSWORD "moje-haslo"
+#define SECRETS_PROVIDER_URL "http://192.168.1.50:8000"
+```
+
+Alternatywnie karta microSD (FAT32) może zawierać `/config.json`:
+
+```json
+{
+  "wifi": {
+    "ssid": "moja-siec",
+    "password": "moje-haslo"
+  },
+  "provider_url": "http://192.168.1.50:8000"
+}
+```
+
+`provider_url` to adres bazowy serwera, bez `/transit` na końcu. Obsługiwane są gniazda microSD w Core S3 SE i Tab5. Brak karty lub pliku jest bezpieczny: firmware używa wtedy wartości z `secrets.h`, a przy pustej konfiguracji pokazuje `WiFi OFF`.
+
+## Wybór przystanku
+
+- Tab5 pokazuje pełną klawiaturę QWERTY na ekranie.
+- Core S3 pokazuje klawiaturę telefoniczną: kolejne stuknięcia tego samego pola przez 0,9 s przełączają literę (`2 ABC`, `3 DEF` itd.).
+- `WROC` wraca do miast, `USUN` kasuje ostatni znak, a `SZUKAJ` pobiera maksymalnie 255 pasujących przystanków z lokalnego API.
+
+Po wyborze przystanku ekran odświeża odjazdy co 30 sekund. Zielone `WiFi -NN` oznacza połączenie i siłę sygnału w dBm; czerwone `WiFi OFF` oznacza brak sieci.
 
 ## Architektura
 
 `operation/` nie zna M5Stack, Arduino ani konkretnego wyświetlacza:
 
-- `fw_transit_source_t` — wspólny kontrakt dla każdego miasta;
+- `fw_local_api_source_t` — adapter jednolitego lokalnego API dla każdego miasta;
 - `driver_http_client_t` — kontrakt HTTP, bez zależności od Wi-Fi;
 - `ui_display_t` — małe API rysowania, kompatybilne z adapterem Adafruit GFX/M5GFX;
-- `sys_platform.h` — jedyny kontrakt płyty. Kod M5 jest wyłącznie w `src/systems/sys_m5stack_platform.cpp`.
+- `sys_platform.h` — jedyny kontrakt płyty. Kod M5 i odczyt karty SD są wyłącznie w `src/systems/sys_m5stack_platform.cpp`.
 
-Dodanie Waveshare wymaga nowego pliku implementującego `sys_platform.h`; nie wymaga importowania API M5 do UI ani do źródeł danych.
+Adresy używane przez firmware:
 
-## Źródła miast
+```text
+GET /transit/{provider}/stops?query={fragment}
+GET /transit/{provider}/schedule/{stop_name}/12
+```
 
-Katalog źródeł jest w `src/operation/fw_city_catalogue.cpp`.
-
-| Miasto | Format źródłowy | Stan adaptera |
-| --- | --- | --- |
-| Gdańsk | TRISTAR JSON | Gotowy: bieżące odjazdy z `departures?stopId=` |
-| Warszawa | API otwartych danych | Wymaga klucza API i adaptera zasobu wybranego z katalogu |
-| Łódź | GTFS i GTFS-RT protobuf | Wymaga dekodera GTFS-RT oraz lokalnego indeksu przystanków |
-| Wrocław | statyczny GTFS ZIP | Wymaga importu GTFS do pamięci flash/SD |
-| Poznań | statyczny GTFS ZIP | Wymaga importu GTFS do pamięci flash/SD |
-
-Gdańsk jest jedynym miastem z jednym publicznym endpointem odjazdów na słupek, więc działa bez pośrednika i bez klucza. Pozostałe miasta zostały wpisane do katalogu z oficjalnymi endpointami, ale ich różne formaty celowo nie są udawane jako jeden niedziałający parser.
+Providerami dla obecnego wyboru miast są `warsaw`, `lodz`, `gdansk`, `wroclaw` i `poznan`. Serwer IOT Open API obsługuje więcej providerów; rozszerzenie listy ekranowej wymaga tylko wpisu w `src/operation/fw_city_catalogue.cpp`.

@@ -1,4 +1,5 @@
 .pio
 .pio/
+include/secrets.h
 include/operation/fw_station_config_local.h
 .idea/
