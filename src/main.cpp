@@ -147,7 +147,7 @@ void render_city_picker(const bool refresh_content_only)
 void render_departures()
 {
     departures_screen.render_departures(
-        station_name, departures, sys_platform_local_time_s(), sys_platform_millis(), network_status());
+        station_name, departures, sys_platform_epoch_s(), sys_platform_millis(), network_status());
 }
 
 void download_departures(void *const user_context)
@@ -170,12 +170,13 @@ void request_departures()
     }
 
     (void)snprintf(download_stop_name, sizeof(download_stop_name), "%s", selected_stop.name);
-    download_departure_count = departures_screen.departure_visible_rows();
+    download_departure_count = fw_departure_capacity;
     has_downloaded_departures = false;
     if (!sys_platform_queue_background_task(download_departures, nullptr))
     {
         return;
     }
+    last_refresh_ms = sys_platform_millis();
 }
 
 void apply_downloaded_departures()
@@ -299,7 +300,7 @@ void setup()
         (void)snprintf(station_name, sizeof(station_name), "%s", "Wybierz miasto");
     }
     departures_screen.render_departures(
-        station_name, departures, sys_platform_local_time_s(), sys_platform_millis(), network_status());
+        station_name, departures, sys_platform_epoch_s(), sys_platform_millis(), network_status());
     last_server_check_ms = sys_platform_millis() - server_check_interval_ms;
     if (has_selected_stop)
     {

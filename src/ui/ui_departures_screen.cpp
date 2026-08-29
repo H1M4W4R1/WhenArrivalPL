@@ -21,10 +21,11 @@ static const int16_t picker_first_row_y = 66;
 static const int16_t picker_row_height = 48;
 static const int16_t pagination_height = 48;
 static const int16_t departure_first_row_y = 66;
-static const int16_t departure_row_height = 48;
+static const int16_t departure_row_height = 46;
 static const int16_t departure_text_height = 34;
 static const int16_t departure_route_area_width = 104;
 static const int16_t departure_time_area_width = 128;
+static const size_t departure_visible_row_count = 14u;
 #else
 static const uint8_t ui_text_scale = 2u;
 static const uint8_t ui_small_text_scale = 1u;
@@ -37,6 +38,7 @@ static const int16_t departure_row_height = 34;
 static const int16_t departure_text_height = 20;
 static const int16_t departure_route_area_width = 64;
 static const int16_t departure_time_area_width = 54;
+static const size_t departure_visible_row_count = 5u;
 #endif
 /* Change this one value to adjust the marquee pace. */
 static const uint32_t marquee_character_step_ms = 500u;
@@ -61,11 +63,9 @@ size_t utf8_character_count(const char *const text)
     return character_count;
 }
 
-uint32_t departure_remaining_seconds(const fw_departure_t &departure, const uint32_t now_time_s)
+bool departure_has_not_passed(const fw_departure_t &departure, const uint32_t now_time_s)
 {
-    return departure.departure_time_s >= now_time_s ?
-        departure.departure_time_s - now_time_s :
-        (86400u - now_time_s) + departure.departure_time_s;
+    return departure.departure_time_s >= now_time_s;
 }
 
 uint16_t wifi_indicator_color(const ui_network_status_t &network_status)
@@ -211,19 +211,23 @@ void ui_departures_screen_t::render_departures(
         departures.count : fw_departure_capacity;
     const uint32_t now_time_s = now_epoch_s % 86400u;
     size_t departure_indices[fw_departure_capacity];
+    size_t pending_departure_count = 0u;
     for (size_t index = 0u; index < departure_count; ++index)
     {
-        departure_indices[index] = index;
+        if (departure_has_not_passed(departures.items[index], now_time_s))
+        {
+            departure_indices[pending_departure_count] = index;
+            ++pending_departure_count;
+        }
     }
-    for (size_t index = 0u; index < departure_count; ++index)
+    for (size_t index = 0u; index < pending_departure_count; ++index)
     {
         size_t nearest_index = index;
-        for (size_t candidate = index + 1u; candidate < departure_count; ++candidate)
+        for (size_t candidate = index + 1u; candidate < pending_departure_count; ++candidate)
         {
             const fw_departure_t &nearest = departures.items[departure_indices[nearest_index]];
             const fw_departure_t &next = departures.items[departure_indices[candidate]];
-            if (departure_remaining_seconds(next, now_time_s) <
-                departure_remaining_seconds(nearest, now_time_s))
+            if (next.departure_time_s < nearest.departure_time_s)
             {
                 nearest_index = candidate;
             }
@@ -233,7 +237,15 @@ void ui_departures_screen_t::render_departures(
         departure_indices[nearest_index] = swap_index;
     }
 
-    for (size_t index = 0u; index < departure_count; ++index)
+    const size_t displayed_departure_count = pending_departure_count < departure_visible_row_count ?
+        pending_departure_count : departure_visible_row_count;
+    if (displayed_departure_count == 0u)
+    {
+        _display->draw_text(10, departure_first_row_y, "Brak odjazdow", color_black, ui_text_scale);
+        return;
+    }
+
+    for (size_t index = 0u; index < displayed_departure_count; ++index)
     {
         const int16_t row_y = static_cast<int16_t>(
             departure_first_row_y + index * static_cast<size_t>(departure_row_height));
@@ -242,7 +254,7 @@ void ui_departures_screen_t::render_departures(
             break;
         }
         const fw_departure_t &departure = departures.items[departure_indices[index]];
-        const uint32_t remaining_seconds = departure_remaining_seconds(departure, now_time_s);
+        const uint32_t remaining_seconds = departure.departure_time_s - now_time_s;
         char remaining[12];
         (void)snprintf(remaining, sizeof(remaining), "%lum", static_cast<unsigned long>(remaining_seconds / 60u));
 
@@ -486,7 +498,9 @@ size_t ui_departures_screen_t::departure_visible_rows() const
     const int16_t available_height = static_cast<int16_t>(
         _display->height() - departure_first_row_y - departure_text_height - 1);
     const size_t visible_rows = static_cast<size_t>(available_height / departure_row_height) + 1u;
-    return visible_rows < fw_departure_capacity ? visible_rows : fw_departure_capacity;
+    const size_t visible_capacity = departure_visible_row_count < fw_departure_capacity ?
+        departure_visible_row_count : fw_departure_capacity;
+    return visible_rows < visible_capacity ? visible_rows : visible_capacity;
 }
 
 int16_t ui_departures_screen_t::stop_picker_first_row_y() const

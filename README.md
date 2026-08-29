@@ -46,7 +46,7 @@ Alternatywnie karta microSD (FAT32) może zawierać `/config.json`:
 - Core S3 pokazuje klawiaturę telefoniczną: kolejne stuknięcia tego samego pola przez 0,9 s przełączają literę (`2 ABC`, `3 DEF` itd.).
 - `WROC` wraca do miast, `USUN` kasuje ostatni znak, a `SZUKAJ` pobiera maksymalnie 255 pasujących przystanków z lokalnego API.
 
-Po wyborze przystanku ekran odświeża odjazdy co 30 sekund. CoreS3 pobiera pięć pozycji — dokładnie tyle, ile mieści ekran — a większe ekrany pobierają liczbę pozycji, które mogą wyświetlić. W nagłówku `WiFi` ma kolor zależny od RSSI: zielony (silny), żółty, pomarańczowy lub czerwony (słaby/brak połączenia). `Srv` jest zielone po udanym połączeniu z serwerem, czerwone gdy serwer nie odpowiada.
+Po wyborze przystanku ekran odświeża odjazdy co 30 sekund. Tab5 pobiera 24 pozycje i pokazuje do 14, a CoreS3 pobiera 10 i pokazuje do 5. Minione odjazdy znikają z listy. Pole `estimated_at` musi być pełnym znacznikiem ISO 8601 z czasem strefowym (`Z` lub `±HH:MM`); firmware normalizuje je do UTC przed porównaniem z zegarem NTP. W nagłówku `WiFi` ma kolor zależny od RSSI: zielony (silny), żółty, pomarańczowy lub czerwony (słaby/brak połączenia). `Srv` jest zielone po udanym połączeniu z serwerem, czerwone gdy serwer nie odpowiada.
 
 Lista miast jest pobierana przy starcie i co 30 sekund z `GET /status`. Aktualne API zwraca slugi providerów, więc są one używane jako nazwy, chyba że odpowiedź zawiera opcjonalne pole `city`. Długie listy miast i przystanków mają strony; użyj przycisków `<` i `>` na dole ekranu.
 

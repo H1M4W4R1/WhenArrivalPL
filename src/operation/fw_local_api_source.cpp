@@ -49,26 +49,170 @@ bool copy_text(char *const destination, const size_t destination_size, const cha
     return (written >= 0) && (static_cast<size_t>(written) < destination_size);
 }
 
+bool is_decimal_digit(const char character)
+{
+    return (character >= '0') && (character <= '9');
+}
+
+bool read_two_digits(const char *const text, uint8_t *const value)
+{
+    if ((text == nullptr) || (value == nullptr) || !is_decimal_digit(text[0u]) ||
+        !is_decimal_digit(text[1u]))
+    {
+        return false;
+    }
+
+    *value = static_cast<uint8_t>((text[0u] - '0') * 10 + (text[1u] - '0'));
+    return true;
+}
+
+bool read_four_digits(const char *const text, uint16_t *const value)
+{
+    if ((text == nullptr) || (value == nullptr))
+    {
+        return false;
+    }
+
+    uint16_t parsed_value = 0u;
+    for (size_t index = 0u; index < 4u; ++index)
+    {
+        if (!is_decimal_digit(text[index]))
+        {
+            return false;
+        }
+        parsed_value = static_cast<uint16_t>(parsed_value * 10u +
+            static_cast<uint16_t>(text[index] - '0'));
+    }
+
+    *value = parsed_value;
+    return true;
+}
+
+bool is_leap_year(const uint16_t year)
+{
+    return ((year % 4u) == 0u) && (((year % 100u) != 0u) || ((year % 400u) == 0u));
+}
+
+uint8_t days_in_month(const uint16_t year, const uint8_t month)
+{
+    static const uint8_t month_days[] =
+    {
+        31u, 28u, 31u, 30u, 31u, 30u, 31u, 31u, 30u, 31u, 30u, 31u
+    };
+    if ((month == 0u) || (month > 12u))
+    {
+        return 0u;
+    }
+    if ((month == 2u) && is_leap_year(year))
+    {
+        return 29u;
+    }
+    return month_days[month - 1u];
+}
+
 bool parse_iso_time(const char *const text, uint32_t *const departure_time_s)
 {
-    int hour = 0;
-    int minute = 0;
-    int second = 0;
     if ((text == nullptr) || (departure_time_s == nullptr))
     {
         return false;
     }
-
-    const int item_count = sscanf(text, "%*d-%*d-%*dT%d:%d:%d", &hour, &minute, &second);
-    if ((item_count < 2) || (hour < 0) || (hour > 23) || (minute < 0) || (minute > 59) ||
-        (second < 0) || (second > 59))
+    const size_t text_length = strlen(text);
+    if (text_length < 17u)
     {
         return false;
     }
 
-    *departure_time_s = static_cast<uint32_t>(hour) * 3600u +
-                        static_cast<uint32_t>(minute) * 60u +
-                        static_cast<uint32_t>(second);
+    uint16_t year = 0u;
+    uint8_t month = 0u;
+    uint8_t day = 0u;
+    uint8_t hour = 0u;
+    uint8_t minute = 0u;
+    uint8_t second = 0u;
+    if (!read_four_digits(text, &year) || (text[4u] != '-') || !read_two_digits(text + 5u, &month) ||
+        (text[7u] != '-') || !read_two_digits(text + 8u, &day) || (text[10u] != 'T') ||
+        !read_two_digits(text + 11u, &hour) || (text[13u] != ':') ||
+        !read_two_digits(text + 14u, &minute))
+    {
+        return false;
+    }
+
+    if ((year == 0u) || (month == 0u) || (day == 0u) || (day > days_in_month(year, month)) ||
+        (hour > 23u) || (minute > 59u))
+    {
+        return false;
+    }
+
+    size_t index = 16u;
+    if (text[index] == ':')
+    {
+        if ((index + 2u >= text_length) || !read_two_digits(text + index + 1u, &second) ||
+            (second > 59u))
+        {
+            return false;
+        }
+        index += 3u;
+    }
+
+    if (text[index] == '.')
+    {
+        ++index;
+        const size_t fraction_start = index;
+        while ((index < text_length) && is_decimal_digit(text[index]))
+        {
+            ++index;
+        }
+        if (index == fraction_start)
+        {
+            return false;
+        }
+    }
+
+    int32_t timezone_offset_s = 0;
+    if (text[index] == 'Z')
+    {
+        ++index;
+    }
+    else if ((text[index] == '+') || (text[index] == '-'))
+    {
+        const bool is_negative_offset = text[index] == '-';
+        uint8_t timezone_hour = 0u;
+        uint8_t timezone_minute = 0u;
+        if ((index + 5u >= text_length) || !read_two_digits(text + index + 1u, &timezone_hour) ||
+            (text[index + 3u] != ':') || !read_two_digits(text + index + 4u, &timezone_minute) ||
+            (timezone_hour > 14u) || ((timezone_hour == 14u) && (timezone_minute != 0u)))
+        {
+            return false;
+        }
+        timezone_offset_s = static_cast<int32_t>(timezone_hour) * 3600 +
+            static_cast<int32_t>(timezone_minute) * 60;
+        if (is_negative_offset)
+        {
+            timezone_offset_s = -timezone_offset_s;
+        }
+        index += 6u;
+    }
+    else
+    {
+        return false;
+    }
+
+    if (index != text_length)
+    {
+        return false;
+    }
+
+    const int32_t local_time_s = static_cast<int32_t>(hour) * 3600 +
+        static_cast<int32_t>(minute) * 60 + static_cast<int32_t>(second);
+    int32_t utc_time_s = local_time_s - timezone_offset_s;
+    if (utc_time_s < 0)
+    {
+        utc_time_s += 86400;
+    }
+    else if (utc_time_s >= 86400)
+    {
+        utc_time_s -= 86400;
+    }
+    *departure_time_s = static_cast<uint32_t>(utc_time_s);
     return true;
 }
 

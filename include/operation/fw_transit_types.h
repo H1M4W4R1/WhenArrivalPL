@@ -10,7 +10,11 @@ static const size_t fw_stop_name_max_length = 56u;
 static const size_t fw_stop_id_max_length = 32u;
 static const size_t fw_route_name_max_length = 16u;
 static const size_t fw_headsign_max_length = 56u;
-static const size_t fw_departure_capacity = 12u;
+#if defined(FW_PLATFORM_TAB5)
+static const size_t fw_departure_capacity = 24u;
+#else
+static const size_t fw_departure_capacity = 10u;
+#endif
 static const size_t fw_stop_capacity = 255u;
 
 typedef struct
@@ -23,8 +27,8 @@ typedef struct
 {
     char route_name[fw_route_name_max_length];
     char headsign[fw_headsign_max_length];
-    /* Seconds since midnight. The TRISTAR calendar year is not reliable
-     * for a live board, so departures are compared by time of day. */
+    /* UTC seconds since midnight. Server timestamps are normalized to UTC so
+     * they can be compared with the NTP epoch without a local-time offset. */
     uint32_t departure_time_s;
     int32_t delay_s;
     bool is_realtime;
