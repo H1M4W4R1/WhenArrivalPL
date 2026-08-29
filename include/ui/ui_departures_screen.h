@@ -23,6 +23,11 @@ public:
         uint32_t now_epoch_s,
         uint32_t animation_ms,
         const ui_network_status_t &network_status) const;
+    void render_departure_animation(
+        const char *station_name,
+        const fw_departure_list_t &departures,
+        uint32_t now_epoch_s,
+        uint32_t animation_ms) const;
     void render_city_picker(
         const char *const *city_names,
         size_t city_count,
@@ -57,6 +62,7 @@ private:
         const char *title,
         uint32_t animation_ms,
         const ui_network_status_t &network_status) const;
+    void render_header_title(const char *title, uint32_t animation_ms) const;
 
     ui_display_t *_display;
 };

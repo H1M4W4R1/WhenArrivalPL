@@ -55,6 +55,7 @@ app_picker_stage_t picker_stage = app_picker_stage_city;
 
 void render_city_picker(bool refresh_content_only = false);
 void render_departures();
+void render_departure_animation();
 void show_stop_results(fw_result_t result);
 
 bool copy_station_config_value(
@@ -148,6 +149,12 @@ void render_departures()
 {
     departures_screen.render_departures(
         station_name, departures, sys_platform_epoch_s(), sys_platform_millis(), network_status());
+}
+
+void render_departure_animation()
+{
+    departures_screen.render_departure_animation(
+        station_name, departures, sys_platform_epoch_s(), sys_platform_millis());
 }
 
 void download_departures(void *const user_context)
@@ -478,7 +485,7 @@ void loop()
         }
         else if (has_selected_stop && !shows_search)
         {
-            render_departures();
+            render_departure_animation();
         }
     }
 }
