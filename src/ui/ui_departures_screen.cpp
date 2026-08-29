@@ -24,6 +24,32 @@ static const int16_t departure_text_height = 20;
 static const uint32_t marquee_character_step_ms = 500u;
 static const int16_t marquee_gap_px = 24;
 
+size_t utf8_character_count(const char *const text)
+{
+    if (text == nullptr)
+    {
+        return 0u;
+    }
+
+    size_t character_count = 0u;
+    for (size_t index = 0u; text[index] != '\0'; ++index)
+    {
+        const uint8_t byte = static_cast<uint8_t>(text[index]);
+        if ((byte & 0xc0u) != 0x80u)
+        {
+            ++character_count;
+        }
+    }
+    return character_count;
+}
+
+uint32_t departure_remaining_seconds(const fw_departure_t &departure, const uint32_t now_time_s)
+{
+    return departure.departure_time_s >= now_time_s ?
+        departure.departure_time_s - now_time_s :
+        (86400u - now_time_s) + departure.departure_time_s;
+}
+
 uint16_t wifi_indicator_color(const ui_network_status_t &network_status)
 {
     if (!network_status.is_connected)
@@ -77,7 +103,7 @@ void draw_marquee_text(
         return;
     }
 
-    const size_t text_length = strlen(text);
+    const size_t text_length = utf8_character_count(text);
     const int16_t character_width = static_cast<int16_t>(6 * text_scale);
     const int16_t text_width = static_cast<int16_t>(
         text_length * static_cast<size_t>(character_width));
@@ -143,7 +169,33 @@ void ui_departures_screen_t::render_departures(
         return;
     }
 
-    for (size_t index = 0u; index < departures.count; ++index)
+    const size_t departure_count = departures.count < fw_departure_capacity ?
+        departures.count : fw_departure_capacity;
+    const uint32_t now_time_s = now_epoch_s % 86400u;
+    size_t departure_indices[fw_departure_capacity];
+    for (size_t index = 0u; index < departure_count; ++index)
+    {
+        departure_indices[index] = index;
+    }
+    for (size_t index = 0u; index < departure_count; ++index)
+    {
+        size_t nearest_index = index;
+        for (size_t candidate = index + 1u; candidate < departure_count; ++candidate)
+        {
+            const fw_departure_t &nearest = departures.items[departure_indices[nearest_index]];
+            const fw_departure_t &next = departures.items[departure_indices[candidate]];
+            if (departure_remaining_seconds(next, now_time_s) <
+                departure_remaining_seconds(nearest, now_time_s))
+            {
+                nearest_index = candidate;
+            }
+        }
+        const size_t swap_index = departure_indices[index];
+        departure_indices[index] = departure_indices[nearest_index];
+        departure_indices[nearest_index] = swap_index;
+    }
+
+    for (size_t index = 0u; index < departure_count; ++index)
     {
         const int16_t row_y = static_cast<int16_t>(
             departure_first_row_y + index * static_cast<size_t>(departure_row_height));
@@ -151,11 +203,8 @@ void ui_departures_screen_t::render_departures(
         {
             break;
         }
-        const fw_departure_t &departure = departures.items[index];
-        const uint32_t now_time_s = now_epoch_s % 86400u;
-        const uint32_t remaining_seconds = departure.departure_time_s >= now_time_s ?
-            departure.departure_time_s - now_time_s :
-            (86400u - now_time_s) + departure.departure_time_s;
+        const fw_departure_t &departure = departures.items[departure_indices[index]];
+        const uint32_t remaining_seconds = departure_remaining_seconds(departure, now_time_s);
         char remaining[12];
         (void)snprintf(remaining, sizeof(remaining), "%lum", static_cast<unsigned long>(remaining_seconds / 60u));
 

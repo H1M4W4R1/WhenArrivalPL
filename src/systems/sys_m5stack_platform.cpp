@@ -26,6 +26,7 @@ namespace
 static const size_t wifi_ssid_max_length = 33u;
 static const size_t wifi_password_max_length = 65u;
 static const size_t provider_url_max_length = 128u;
+static const int16_t display_font_character_width = 6;
 /* ESP-IDF interprets xTaskCreatePinnedToCore stack depth as bytes. HTTP client
  * calls need room for SDK frames in addition to firmware parsing. */
 static const uint32_t background_task_stack_bytes = 10240u;
@@ -44,6 +45,153 @@ static TaskHandle_t background_task_handle = nullptr;
 static sys_platform_background_callback_t background_callback = nullptr;
 static void *background_context = nullptr;
 static volatile bool is_background_task_busy = false;
+
+typedef enum
+{
+    polish_diacritic_none = 0,
+    polish_diacritic_acute,
+    polish_diacritic_dot,
+    polish_diacritic_ogonek,
+    polish_diacritic_stroke
+} polish_diacritic_t;
+
+bool decode_utf8_character(const char *&text, uint16_t *const character)
+{
+    if ((text == nullptr) || (character == nullptr) || (text[0u] == '\0'))
+    {
+        return false;
+    }
+
+    const uint8_t first_byte = static_cast<uint8_t>(text[0u]);
+    if (first_byte < 0x80u)
+    {
+        *character = first_byte;
+        ++text;
+        return true;
+    }
+
+    const uint8_t second_byte = static_cast<uint8_t>(text[1u]);
+    if ((first_byte >= 0xc2u) && (first_byte <= 0xdfu) &&
+        ((second_byte & 0xc0u) == 0x80u))
+    {
+        *character = static_cast<uint16_t>(
+            ((first_byte & 0x1fu) << 6u) | (second_byte & 0x3fu));
+        text += 2;
+        return true;
+    }
+
+    if ((first_byte >= 0xe0u) && (first_byte <= 0xefu) &&
+        ((second_byte & 0xc0u) == 0x80u) && (text[1u] != '\0') && (text[2u] != '\0'))
+    {
+        const uint8_t third_byte = static_cast<uint8_t>(text[2u]);
+        if ((third_byte & 0xc0u) != 0x80u)
+        {
+            *character = static_cast<uint16_t>('?');
+            ++text;
+            return true;
+        }
+        *character = static_cast<uint16_t>(
+            ((first_byte & 0x0fu) << 12u) | ((second_byte & 0x3fu) << 6u) |
+            (third_byte & 0x3fu));
+        text += 3;
+        return true;
+    }
+
+    *character = static_cast<uint16_t>('?');
+    ++text;
+    return true;
+}
+
+char polish_base_character(const uint16_t character, polish_diacritic_t *const diacritic)
+{
+    if (diacritic == nullptr)
+    {
+        return '?';
+    }
+
+    *diacritic = polish_diacritic_none;
+    switch (character)
+    {
+        case 0x0104u: *diacritic = polish_diacritic_ogonek; return 'A';
+        case 0x0105u: *diacritic = polish_diacritic_ogonek; return 'a';
+        case 0x0106u: *diacritic = polish_diacritic_acute; return 'C';
+        case 0x0107u: *diacritic = polish_diacritic_acute; return 'c';
+        case 0x0118u: *diacritic = polish_diacritic_ogonek; return 'E';
+        case 0x0119u: *diacritic = polish_diacritic_ogonek; return 'e';
+        case 0x0141u: *diacritic = polish_diacritic_stroke; return 'L';
+        case 0x0142u: *diacritic = polish_diacritic_stroke; return 'l';
+        case 0x0143u: *diacritic = polish_diacritic_acute; return 'N';
+        case 0x0144u: *diacritic = polish_diacritic_acute; return 'n';
+        case 0x00d3u: *diacritic = polish_diacritic_acute; return 'O';
+        case 0x00f3u: *diacritic = polish_diacritic_acute; return 'o';
+        case 0x015au: *diacritic = polish_diacritic_acute; return 'S';
+        case 0x015bu: *diacritic = polish_diacritic_acute; return 's';
+        case 0x0179u: *diacritic = polish_diacritic_acute; return 'Z';
+        case 0x017au: *diacritic = polish_diacritic_acute; return 'z';
+        case 0x017bu: *diacritic = polish_diacritic_dot; return 'Z';
+        case 0x017cu: *diacritic = polish_diacritic_dot; return 'z';
+        default: return character < 0x80u ? static_cast<char>(character) : '?';
+    }
+}
+
+void draw_polish_diacritic(
+    const int16_t x,
+    const int16_t y,
+    const uint8_t text_scale,
+    const uint16_t color,
+    const polish_diacritic_t diacritic)
+{
+    const int16_t pixel_size = static_cast<int16_t>(text_scale);
+    switch (diacritic)
+    {
+        case polish_diacritic_acute:
+            M5.Display.fillRect(x + 3 * pixel_size, y, pixel_size, pixel_size, color);
+            M5.Display.fillRect(x + 2 * pixel_size, y + pixel_size, pixel_size, pixel_size, color);
+            break;
+        case polish_diacritic_dot:
+            M5.Display.fillRect(x + 2 * pixel_size, y, pixel_size, pixel_size, color);
+            break;
+        case polish_diacritic_ogonek:
+            M5.Display.fillRect(
+                x + 3 * pixel_size, y + 7 * pixel_size, pixel_size, pixel_size, color);
+            M5.Display.fillRect(
+                x + 4 * pixel_size, y + 8 * pixel_size, pixel_size, pixel_size, color);
+            break;
+        case polish_diacritic_stroke:
+            M5.Display.fillRect(
+                x + pixel_size, y + 4 * pixel_size, 4 * pixel_size, pixel_size, color);
+            break;
+        case polish_diacritic_none:
+        default:
+            break;
+    }
+}
+
+void draw_utf8_text(
+    const int16_t x,
+    const int16_t y,
+    const char *const text,
+    const uint16_t color,
+    const uint8_t text_scale)
+{
+    if ((text == nullptr) || (text_scale == 0u))
+    {
+        return;
+    }
+
+    const char *cursor = text;
+    int16_t cursor_x = x;
+    uint16_t character = 0u;
+    while (decode_utf8_character(cursor, &character))
+    {
+        polish_diacritic_t diacritic = polish_diacritic_none;
+        const char base_character = polish_base_character(character, &diacritic);
+        (void)M5.Display.drawChar(static_cast<uint16_t>(base_character), cursor_x, y);
+        draw_polish_diacritic(cursor_x, y, text_scale, color, diacritic);
+        cursor_x = static_cast<int16_t>(
+            cursor_x + display_font_character_width * static_cast<int16_t>(text_scale));
+    }
+}
 
 void background_task(void *const task_context)
 {
@@ -218,8 +366,7 @@ public:
         M5.Display.setTextColor(color);
         M5.Display.setTextSize(text_scale);
         M5.Display.setTextWrap(false, false);
-        M5.Display.setCursor(x, y);
-        M5.Display.print(text);
+        draw_utf8_text(x, y, text, color, text_scale);
     }
 };
 
