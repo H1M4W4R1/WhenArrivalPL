@@ -65,6 +65,9 @@ private:
     void render_header_title(const char *title, uint32_t animation_ms) const;
 
     ui_display_t *_display;
+    mutable fw_departure_t _cached_departure_rows[fw_departure_capacity];
+    mutable uint32_t _cached_remaining_minutes[fw_departure_capacity];
+    mutable size_t _cached_departure_row_count;
 };
 
 #endif /* UI_UI_DEPARTURES_SCREEN_H */

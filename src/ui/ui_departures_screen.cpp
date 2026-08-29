@@ -65,6 +65,29 @@ size_t utf8_character_count(const char *const text)
     return character_count;
 }
 
+bool marquee_text_is_needed(
+    const char *const text,
+    const int16_t width,
+    const uint8_t text_scale)
+{
+    if ((text == nullptr) || (width <= 0) || (text_scale == 0u))
+    {
+        return false;
+    }
+
+    const size_t character_width = 6u * static_cast<size_t>(text_scale);
+    return utf8_character_count(text) * character_width > static_cast<size_t>(width);
+}
+
+bool departure_rows_match(const fw_departure_t &left, const fw_departure_t &right)
+{
+    return (strcmp(left.route_name, right.route_name) == 0) &&
+           (strcmp(left.headsign, right.headsign) == 0) &&
+           (left.departure_time_s == right.departure_time_s) &&
+           (left.delay_s == right.delay_s) &&
+           (left.is_realtime == right.is_realtime);
+}
+
 bool departure_has_not_passed(const fw_departure_t &departure, const uint32_t now_time_s)
 {
     return departure.departure_time_s >= now_time_s;
@@ -192,7 +215,7 @@ void draw_marquee_text(
     const int16_t character_width = static_cast<int16_t>(6 * text_scale);
     const int16_t text_width = static_cast<int16_t>(
         text_length * static_cast<size_t>(character_width));
-    if (text_width <= width)
+    if (!marquee_text_is_needed(text, width, text_scale))
     {
         display->draw_text(x, y, text, color, text_scale);
         return;
@@ -209,7 +232,10 @@ void draw_marquee_text(
 }
 
 ui_departures_screen_t::ui_departures_screen_t(ui_display_t *const display) :
-    _display(display)
+    _display(display),
+    _cached_departure_rows{},
+    _cached_remaining_minutes{},
+    _cached_departure_row_count(0u)
 {
 }
 
@@ -251,7 +277,11 @@ void ui_departures_screen_t::render_header_title(
     const int16_t title_width = static_cast<int16_t>(_display->width() - 106);
 #else
     const int16_t clear_width = _display->width();
+#if WIFI_DEBUG
+    const int16_t title_width = static_cast<int16_t>(_display->width() - 106);
+#else
     const int16_t title_width = static_cast<int16_t>(_display->width() - 26);
+#endif
 #endif
     _display->fill_rectangle({0, 0, clear_width, header_height}, color_dark_blue);
     draw_marquee_text(
@@ -272,6 +302,7 @@ void ui_departures_screen_t::render_departures(
     }
 
     _display->fill_screen(color_white);
+    _cached_departure_row_count = 0u;
     render_header(station_name, animation_ms, network_status);
 
     if (departures.count == 0u)
@@ -324,6 +355,9 @@ void ui_departures_screen_t::render_departures(
         _display->draw_text(
             static_cast<int16_t>(_display->width() - remaining_width - 4), row_y,
             remaining, departure.is_realtime ? color_red : color_gray, ui_text_scale);
+        _cached_departure_rows[index] = departure;
+        _cached_remaining_minutes[index] = remaining_seconds / 60u;
+        _cached_departure_row_count = index + 1u;
     }
 }
 
@@ -338,7 +372,11 @@ void ui_departures_screen_t::render_departure_animation(
         return;
     }
 
-    render_header_title(station_name, animation_ms);
+    const int16_t title_width = static_cast<int16_t>(_display->width() - 26);
+    if (marquee_text_is_needed(station_name, title_width, ui_text_scale))
+    {
+        render_header_title(station_name, animation_ms);
+    }
 
     const uint32_t now_time_s = now_epoch_s % 86400u;
     size_t departure_indices[fw_departure_capacity];
@@ -348,8 +386,7 @@ void ui_departures_screen_t::render_departure_animation(
     const size_t displayed_departure_count = pending_departure_count < departure_visible_row_count ?
         pending_departure_count : departure_visible_row_count;
 
-    /* Clear every departure text row so a passed item cannot leave pixels behind. */
-    for (size_t index = 0u; index < departure_visible_row_count; ++index)
+    for (size_t index = displayed_departure_count; index < _cached_departure_row_count; ++index)
     {
         const int16_t row_y = static_cast<int16_t>(
             departure_first_row_y + index * static_cast<size_t>(departure_row_height));
@@ -371,9 +408,23 @@ void ui_departures_screen_t::render_departure_animation(
         }
 
         const fw_departure_t &departure = departures.items[departure_indices[index]];
+        const uint32_t remaining_seconds = departure.departure_time_s - now_time_s;
+        const uint32_t remaining_minutes = remaining_seconds / 60u;
         const int16_t headsign_x = static_cast<int16_t>(departure_route_area_width + 4);
         const int16_t headsign_width = static_cast<int16_t>(
             _display->width() - headsign_x - departure_time_area_width);
+        const bool is_animated = marquee_text_is_needed(
+            departure.headsign, headsign_width, ui_text_scale);
+        const bool has_changed = (index >= _cached_departure_row_count) ||
+            !departure_rows_match(_cached_departure_rows[index], departure) ||
+            (_cached_remaining_minutes[index] != remaining_minutes);
+        if (!is_animated && !has_changed)
+        {
+            continue;
+        }
+
+        _display->fill_rectangle(
+            {0, row_y, _display->width(), departure_text_height}, color_white);
         draw_marquee_text(
             _display, headsign_x, row_y, headsign_width, departure.headsign, color_black,
             ui_text_scale, animation_ms);
@@ -386,7 +437,6 @@ void ui_departures_screen_t::render_departure_animation(
              departure_time_area_width, departure_text_height}, color_white);
         _display->draw_text(8, row_y, departure.route_name, color_dark_blue, ui_text_scale);
 
-        const uint32_t remaining_seconds = departure.departure_time_s - now_time_s;
         char remaining[12];
         (void)snprintf(
             remaining, sizeof(remaining), "%lum",
@@ -396,7 +446,10 @@ void ui_departures_screen_t::render_departure_animation(
         _display->draw_text(
             static_cast<int16_t>(_display->width() - remaining_width - 4), row_y,
             remaining, departure.is_realtime ? color_red : color_gray, ui_text_scale);
+        _cached_departure_rows[index] = departure;
+        _cached_remaining_minutes[index] = remaining_minutes;
     }
+    _cached_departure_row_count = displayed_departure_count;
 }
 
 void ui_departures_screen_t::render_city_picker(
