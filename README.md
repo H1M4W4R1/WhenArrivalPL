@@ -20,6 +20,7 @@ Firmware tablicy najbliższych odjazdów dla ESP32 i ekranów dotykowych. Dane p
 #define SECRETS_WIFI_SSID "moja-siec"
 #define SECRETS_WIFI_PASSWORD "moje-haslo"
 #define SECRETS_PROVIDER_URL "http://192.168.1.50:8000"
+#define SECRETS_NTP_SERVER "pool.ntp.org"
 ```
 
 Alternatywnie karta microSD (FAT32) może zawierać `/config.json`:
@@ -30,11 +31,14 @@ Alternatywnie karta microSD (FAT32) może zawierać `/config.json`:
     "ssid": "moja-siec",
     "password": "moje-haslo"
   },
-  "provider_url": "http://192.168.1.50:8000"
+  "provider_url": "http://192.168.1.50:8000",
+  "ntp_server": "pool.ntp.org"
 }
 ```
 
 `provider_url` to adres bazowy serwera, bez `/transit` na końcu. Obsługiwane są gniazda microSD w Core S3 SE i Tab5. Brak karty lub pliku jest bezpieczny: firmware używa wtedy wartości z `secrets.h`, a przy pustej konfiguracji pokazuje `WiFi OFF`.
+
+`ntp_server` jest opcjonalny; domyślnie używany jest `pool.ntp.org`, z `time.cloudflare.com` jako zapasem. NTP przekazuje czas UTC, nie strefę czasową. Firmware zawsze przelicza go na polski czas lokalny (`CET`/`CEST`), automatycznie zmieniając czas w ostatnią niedzielę marca i października.
 
 ## Wybór przystanku
 

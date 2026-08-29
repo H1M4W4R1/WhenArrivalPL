@@ -13,6 +13,21 @@ static const uint16_t color_red = 0xf800u;
 static const uint16_t color_green = 0x07e0u;
 static const uint16_t color_yellow = 0xffe0u;
 static const uint16_t color_orange = 0xfd20u;
+#if defined(FW_PLATFORM_TAB5)
+static const uint8_t ui_text_scale = 4u;
+static const uint8_t ui_small_text_scale = 2u;
+static const int16_t header_height = 54;
+static const int16_t picker_first_row_y = 66;
+static const int16_t picker_row_height = 48;
+static const int16_t pagination_height = 48;
+static const int16_t departure_first_row_y = 66;
+static const int16_t departure_row_height = 48;
+static const int16_t departure_text_height = 34;
+static const int16_t departure_route_area_width = 104;
+static const int16_t departure_time_area_width = 128;
+#else
+static const uint8_t ui_text_scale = 2u;
+static const uint8_t ui_small_text_scale = 1u;
 static const int16_t header_height = 42;
 static const int16_t picker_first_row_y = 54;
 static const int16_t picker_row_height = 34;
@@ -20,6 +35,9 @@ static const int16_t pagination_height = 38;
 static const int16_t departure_first_row_y = 52;
 static const int16_t departure_row_height = 34;
 static const int16_t departure_text_height = 20;
+static const int16_t departure_route_area_width = 64;
+static const int16_t departure_time_area_width = 54;
+#endif
 /* Change this one value to adjust the marquee pace. */
 static const uint32_t marquee_character_step_ms = 500u;
 static const int16_t marquee_gap_px = 24;
@@ -85,7 +103,25 @@ void draw_button(
     display->fill_rectangle(rectangle, color);
     display->draw_text(
         static_cast<int16_t>(rectangle.x + 4), static_cast<int16_t>(rectangle.y + 4),
-        text, color_white, 2u);
+        text, color_white, ui_text_scale);
+}
+
+void draw_keyboard_key(
+    ui_display_t *const display,
+    const ui_rectangle_t &touch_rectangle,
+    const char *const text,
+    const uint16_t color)
+{
+    static const int16_t border_size = 2;
+    const ui_rectangle_t visible_rectangle =
+    {
+        static_cast<int16_t>(touch_rectangle.x + border_size),
+        static_cast<int16_t>(touch_rectangle.y + border_size),
+        static_cast<int16_t>(touch_rectangle.width - 2 * border_size),
+        static_cast<int16_t>(touch_rectangle.height - 2 * border_size)
+    };
+
+    draw_button(display, visible_rectangle, text, color);
 }
 
 void draw_marquee_text(
@@ -142,10 +178,12 @@ void ui_departures_screen_t::render_header(
     const int16_t wifi_x = static_cast<int16_t>(_display->width() - 90);
     const int16_t server_x = static_cast<int16_t>(_display->width() - 42);
     draw_marquee_text(
-        _display, 10, 13, static_cast<int16_t>(wifi_x - 16), title, color_white, 2u, animation_ms);
-    _display->draw_text(wifi_x, 15, "WiFi", wifi_indicator_color(network_status), 1u);
+        _display, 10, 13, static_cast<int16_t>(wifi_x - 16), title, color_white, ui_text_scale,
+        animation_ms);
+    _display->draw_text(wifi_x, 15, "WiFi", wifi_indicator_color(network_status), ui_small_text_scale);
     _display->draw_text(
-        server_x, 15, "Srv", network_status.is_server_available ? color_green : color_red, 1u);
+        server_x, 15, "Srv", network_status.is_server_available ? color_green : color_red,
+        ui_small_text_scale);
 }
 
 void ui_departures_screen_t::render_departures(
@@ -165,7 +203,7 @@ void ui_departures_screen_t::render_departures(
 
     if (departures.count == 0u)
     {
-        _display->draw_text(10, 62, "Brak odjazdow", color_black, 2u);
+        _display->draw_text(10, departure_first_row_y, "Brak odjazdow", color_black, ui_text_scale);
         return;
     }
 
@@ -208,19 +246,24 @@ void ui_departures_screen_t::render_departures(
         char remaining[12];
         (void)snprintf(remaining, sizeof(remaining), "%lum", static_cast<unsigned long>(remaining_seconds / 60u));
 
-        _display->draw_text(8, row_y, departure.route_name, color_dark_blue, 2u);
-        const int16_t headsign_x = 68;
-        const int16_t headsign_width = static_cast<int16_t>(_display->width() - headsign_x - 54);
+        _display->draw_text(8, row_y, departure.route_name, color_dark_blue, ui_text_scale);
+        const int16_t headsign_x = static_cast<int16_t>(departure_route_area_width + 4);
+        const int16_t headsign_width = static_cast<int16_t>(
+            _display->width() - headsign_x - departure_time_area_width);
         draw_marquee_text(
-            _display, headsign_x, row_y, headsign_width, departure.headsign, color_black, 2u,
+            _display, headsign_x, row_y, headsign_width, departure.headsign, color_black, ui_text_scale,
             animation_ms);
-        _display->fill_rectangle({0, row_y, 64, 22}, color_white);
         _display->fill_rectangle(
-            {static_cast<int16_t>(_display->width() - 54), row_y, 54, 22}, color_white);
-        _display->draw_text(8, row_y, departure.route_name, color_dark_blue, 2u);
+            {0, row_y, departure_route_area_width, departure_text_height}, color_white);
+        _display->fill_rectangle(
+            {static_cast<int16_t>(_display->width() - departure_time_area_width), row_y,
+             departure_time_area_width, departure_text_height}, color_white);
+        _display->draw_text(8, row_y, departure.route_name, color_dark_blue, ui_text_scale);
+        const int16_t remaining_width = static_cast<int16_t>(
+            utf8_character_count(remaining) * 6u * static_cast<size_t>(ui_text_scale));
         _display->draw_text(
-            static_cast<int16_t>(_display->width() - 52), row_y,
-            remaining, departure.is_realtime ? color_red : color_gray, 2u);
+            static_cast<int16_t>(_display->width() - remaining_width - 4), row_y,
+            remaining, departure.is_realtime ? color_red : color_gray, ui_text_scale);
     }
 }
 
@@ -250,7 +293,7 @@ void ui_departures_screen_t::render_city_picker(
          static_cast<int16_t>(pagination_y - picker_first_row_y)}, color_white);
     if (city_count == 0u)
     {
-        _display->draw_text(10, picker_first_row_y, "Brak miast", color_black, 2u);
+        _display->draw_text(10, picker_first_row_y, "Brak miast", color_black, ui_text_scale);
     }
     const size_t first_index = page_index * visible_rows;
     const size_t last_index = first_index + visible_rows < city_count ?
@@ -258,11 +301,12 @@ void ui_departures_screen_t::render_city_picker(
     for (size_t index = first_index; index < last_index; ++index)
     {
         const size_t visible_index = index - first_index;
-        const int16_t row_y = static_cast<int16_t>(54 + visible_index * 34u);
+        const int16_t row_y = static_cast<int16_t>(
+            picker_first_row_y + visible_index * static_cast<size_t>(picker_row_height));
         const uint16_t color = index == selected_index ? color_dark_blue : color_black;
         draw_marquee_text(
             _display, 10, row_y, static_cast<int16_t>(_display->width() - 20), city_names[index],
-            color, 2u, animation_ms);
+            color, ui_text_scale, animation_ms);
     }
 
     const size_t page_count = city_count == 0u ? 1u :
@@ -283,7 +327,7 @@ void ui_departures_screen_t::render_city_picker(
         static_cast<unsigned int>(page_count));
     _display->draw_text(
         static_cast<int16_t>(button_width + 8), static_cast<int16_t>(pagination_y + 10), page_label,
-        color_black, 2u);
+        color_black, ui_text_scale);
 }
 
 void ui_departures_screen_t::render_stop_picker(
@@ -310,7 +354,7 @@ void ui_departures_screen_t::render_stop_picker(
          static_cast<int16_t>(pagination_y - picker_first_row_y)}, color_white);
     if (stops.count == 0u)
     {
-        _display->draw_text(10, 62, "Brak przystankow", color_black, 2u);
+        _display->draw_text(10, picker_first_row_y, "Brak przystankow", color_black, ui_text_scale);
         return;
     }
 
@@ -326,7 +370,7 @@ void ui_departures_screen_t::render_stop_picker(
         const uint16_t color = index == selected_index ? color_dark_blue : color_black;
         draw_marquee_text(
             _display, 10, row_y, static_cast<int16_t>(_display->width() - 20), stops.items[index].name,
-            color, 2u, animation_ms);
+            color, ui_text_scale, animation_ms);
     }
 
     const size_t page_count = (stops.count + visible_rows - 1u) / visible_rows;
@@ -346,7 +390,7 @@ void ui_departures_screen_t::render_stop_picker(
         static_cast<unsigned int>(page_count));
     _display->draw_text(
         static_cast<int16_t>(button_width + 8), static_cast<int16_t>(pagination_y + 10), page_label,
-        color_black, 2u);
+        color_black, ui_text_scale);
 }
 
 void ui_departures_screen_t::render_stop_search(
@@ -361,7 +405,9 @@ void ui_departures_screen_t::render_stop_search(
 
     _display->fill_screen(color_white);
     render_header("Szukaj przystanku", 0u, network_status);
-    _display->draw_text(8, 52, query[0u] == '\0' ? "Wpisz nazwe" : query, color_black, 2u);
+    _display->draw_text(
+        8, picker_first_row_y, query[0u] == '\0' ? "Wpisz nazwe" : query, color_black,
+        ui_text_scale);
 
     if (has_full_keyboard)
     {
@@ -375,7 +421,7 @@ void ui_departures_screen_t::render_stop_search(
             for (size_t key = 0u; key < key_count; ++key)
             {
                 char label[2u] = {rows[row][key], '\0'};
-                draw_button(
+                draw_keyboard_key(
                     _display,
                     {static_cast<int16_t>(key * static_cast<size_t>(key_width)),
                      static_cast<int16_t>(keyboard_top + row * row_height), key_width,
@@ -386,9 +432,9 @@ void ui_departures_screen_t::render_stop_search(
         }
         const int16_t action_y = static_cast<int16_t>(_display->height() - 50);
         const int16_t action_width = static_cast<int16_t>(_display->width() / 3);
-        draw_button(_display, {0, action_y, action_width, 50}, "WROC", color_gray);
-        draw_button(_display, {action_width, action_y, action_width, 50}, "USUN", color_gray);
-        draw_button(
+        draw_keyboard_key(_display, {0, action_y, action_width, 50}, "WROC", color_gray);
+        draw_keyboard_key(_display, {action_width, action_y, action_width, 50}, "USUN", color_gray);
+        draw_keyboard_key(
             _display,
             {static_cast<int16_t>(2 * action_width), action_y,
              static_cast<int16_t>(_display->width() - 2 * action_width), 50},
@@ -468,5 +514,5 @@ void ui_departures_screen_t::render_message(
 
     _display->fill_screen(color_white);
     render_header(title, 0u, network_status);
-    _display->draw_text(10, 62, message, color_black, 2u);
+    _display->draw_text(10, picker_first_row_y, message, color_black, ui_text_scale);
 }

@@ -27,10 +27,16 @@ namespace
 static const size_t wifi_ssid_max_length = 33u;
 static const size_t wifi_password_max_length = 65u;
 static const size_t provider_url_max_length = 128u;
+static const size_t ntp_server_max_length = 128u;
 static const int16_t display_font_character_width = 6;
 static const char *const sd_config_path = "/config.json";
 static const char *const sd_config_temporary_path = "/config.tmp";
 static const char *const nvs_namespace = "moja_stacja";
+/* Polish standard time and EU daylight-saving transitions: last Sunday of
+ * March at 02:00, last Sunday of October at 03:00. NTP supplies UTC only. */
+static const char *const polish_timezone = "CET-1CEST,M3.5.0/2,M10.5.0/3";
+static const char *const default_ntp_server = "pool.ntp.org";
+static const char *const fallback_ntp_server = "time.cloudflare.com";
 /* ESP-IDF interprets xTaskCreatePinnedToCore stack depth as bytes. HTTP client
  * calls need room for SDK frames in addition to firmware parsing. */
 static const uint32_t background_task_stack_bytes = 10240u;
@@ -41,6 +47,7 @@ typedef struct
     char wifi_ssid[wifi_ssid_max_length];
     char wifi_password[wifi_password_max_length];
     char provider_url[provider_url_max_length];
+    char ntp_server[ntp_server_max_length];
 } sys_provider_config_t;
 
 static sys_provider_config_t provider_config{};
@@ -302,6 +309,12 @@ void load_compile_time_config()
         provider_config.wifi_password, sizeof(provider_config.wifi_password), SECRETS_WIFI_PASSWORD);
     (void)copy_config_value(
         provider_config.provider_url, sizeof(provider_config.provider_url), SECRETS_PROVIDER_URL);
+    if (!copy_config_value(
+            provider_config.ntp_server, sizeof(provider_config.ntp_server), SECRETS_NTP_SERVER))
+    {
+        (void)copy_config_value(
+            provider_config.ntp_server, sizeof(provider_config.ntp_server), default_ntp_server);
+    }
 }
 
 bool initialize_sd_card()
@@ -341,6 +354,7 @@ bool write_sd_card_config()
     wifi["ssid"] = provider_config.wifi_ssid;
     wifi["password"] = provider_config.wifi_password;
     config_document["provider_url"] = provider_config.provider_url;
+    config_document["ntp_server"] = provider_config.ntp_server;
     JsonObject station = config_document["station"].to<JsonObject>();
     JsonObject city = station["city"].to<JsonObject>();
     city["name"] = saved_station_config.city_name;
@@ -410,6 +424,9 @@ void load_sd_card_config()
     (void)copy_config_value(
         provider_config.provider_url, sizeof(provider_config.provider_url),
         config_document["provider_url"] | "");
+    (void)copy_config_value(
+        provider_config.ntp_server, sizeof(provider_config.ntp_server),
+        config_document["ntp_server"] | "");
     saved_station_config = {};
     load_station_config_from_document();
 }
@@ -756,9 +773,9 @@ void sys_platform_initialize(void)
     is_network_ready = WiFi.status() == WL_CONNECTED;
     if (is_network_ready)
     {
-        (void)setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
+        (void)setenv("TZ", polish_timezone, 1);
         tzset();
-        configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+        configTime(0, 0, provider_config.ntp_server, fallback_ntp_server);
         char message[40];
         (void)snprintf(message, sizeof(message), "WiFi: polaczono, RSSI %d dBm", static_cast<int>(WiFi.RSSI()));
         sys_platform_debug_log(message);

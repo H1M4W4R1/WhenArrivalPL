@@ -35,6 +35,10 @@
 #define SECRETS_PROVIDER_URL ""
 #endif
 
+#ifndef SECRETS_NTP_SERVER
+#define SECRETS_NTP_SERVER ""
+#endif
+
 #ifndef FW_ENABLE_DEBUG
 #define FW_ENABLE_DEBUG 1
 #endif
