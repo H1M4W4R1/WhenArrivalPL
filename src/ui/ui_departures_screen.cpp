@@ -1,5 +1,7 @@
 #include "ui/ui_departures_screen.h"
 
+#include "operation/fw_station_config.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -68,6 +70,7 @@ bool departure_has_not_passed(const fw_departure_t &departure, const uint32_t no
     return departure.departure_time_s >= now_time_s;
 }
 
+#if WIFI_DEBUG
 uint16_t wifi_indicator_color(const ui_network_status_t &network_status)
 {
     if (!network_status.is_connected)
@@ -88,6 +91,7 @@ uint16_t wifi_indicator_color(const ui_network_status_t &network_status)
     }
     return color_red;
 }
+#endif
 
 void draw_button(
     ui_display_t *const display,
@@ -175,15 +179,23 @@ void ui_departures_screen_t::render_header(
     }
 
     _display->fill_rectangle({0, 0, _display->width(), header_height}, color_dark_blue);
+#if WIFI_DEBUG
+    const int16_t title_width = static_cast<int16_t>(_display->width() - 106);
+#else
+    const int16_t title_width = static_cast<int16_t>(_display->width() - 26);
+    (void)network_status;
+#endif
+    draw_marquee_text(
+        _display, 10, 13, title_width, title, color_white, ui_text_scale,
+        animation_ms);
+#if WIFI_DEBUG
     const int16_t wifi_x = static_cast<int16_t>(_display->width() - 90);
     const int16_t server_x = static_cast<int16_t>(_display->width() - 42);
-    draw_marquee_text(
-        _display, 10, 13, static_cast<int16_t>(wifi_x - 16), title, color_white, ui_text_scale,
-        animation_ms);
     _display->draw_text(wifi_x, 15, "WiFi", wifi_indicator_color(network_status), ui_small_text_scale);
     _display->draw_text(
         server_x, 15, "Srv", network_status.is_server_available ? color_green : color_red,
         ui_small_text_scale);
+#endif
 }
 
 void ui_departures_screen_t::render_departures(
@@ -423,24 +435,30 @@ void ui_departures_screen_t::render_stop_search(
 
     if (has_full_keyboard)
     {
-        static const char *const rows[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM_"};
+        static const char *const key_labels[] =
+        {
+            "Q", "W", "E/Ę", "R", "T", "Y", "U", "I", "O/Ó", "P",
+            "A/Ą", "S/Ś", "D", "F", "G", "H", "J", "K", "L/Ł",
+            "Z/ŹŻ", "X", "C/Ć", "V", "B", "N/Ń", "M", "_"
+        };
+        static const uint8_t row_key_counts[] = {10u, 9u, 8u};
         const int16_t keyboard_top = static_cast<int16_t>(_display->height() / 3);
         const int16_t row_height = static_cast<int16_t>((_display->height() - keyboard_top - 54) / 3);
+        size_t key_offset = 0u;
         for (uint8_t row = 0u; row < 3u; ++row)
         {
-            const size_t key_count = strlen(rows[row]);
-            const int16_t key_width = static_cast<int16_t>(_display->width() / key_count);
-            for (size_t key = 0u; key < key_count; ++key)
+            const int16_t key_width = static_cast<int16_t>(_display->width() / row_key_counts[row]);
+            for (uint8_t key = 0u; key < row_key_counts[row]; ++key)
             {
-                char label[2u] = {rows[row][key], '\0'};
                 draw_keyboard_key(
                     _display,
                     {static_cast<int16_t>(key * static_cast<size_t>(key_width)),
                      static_cast<int16_t>(keyboard_top + row * row_height), key_width,
                      row_height},
-                    label,
+                    key_labels[key_offset + key],
                     color_dark_blue);
             }
+            key_offset += row_key_counts[row];
         }
         const int16_t action_y = static_cast<int16_t>(_display->height() - 50);
         const int16_t action_width = static_cast<int16_t>(_display->width() / 3);
@@ -456,7 +474,7 @@ void ui_departures_screen_t::render_stop_search(
 
     static const char *const phone_labels[] =
     {
-        "0 _", "2 ABC", "3 DEF", "4 GHI", "5 JKL", "6 MNO", "7 PQRS", "8 TUV", "9 WXYZ"
+        "0 _", "2 ABCĄĆ", "3 DEFĘ", "4 GHI", "5 JKLŁ", "6 MNOŃÓ", "7 PQRSŚ", "8 TUV", "9 WXYZŹŻ"
     };
     const int16_t keyboard_top = 76;
     const int16_t action_height = 34;

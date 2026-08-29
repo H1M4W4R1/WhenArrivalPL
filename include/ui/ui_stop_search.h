@@ -30,13 +30,15 @@ public:
     void reset();
 
 private:
-    ui_stop_search_event_t append_full_key(uint8_t key_index);
+    ui_stop_search_event_t append_full_key(uint8_t key_index, uint32_t touch_duration_ms);
     ui_stop_search_event_t append_phone_key(uint8_t key_index, uint32_t now_ms);
+    ui_stop_search_event_t append_utf8_character(const char *character);
     ui_stop_search_event_t remove_last_character();
 
     bool _was_touched;
     int16_t _touch_start_x;
     int16_t _touch_start_y;
+    uint32_t _touch_start_ms;
     uint8_t _last_phone_key;
     uint8_t _last_phone_character;
     uint32_t _last_phone_key_ms;

@@ -43,4 +43,9 @@
 #define FW_ENABLE_DEBUG 1
 #endif
 
+/* Set to 1 to show Wi-Fi signal and server availability in the UI header. */
+#ifndef WIFI_DEBUG
+#define WIFI_DEBUG 0
+#endif
+
 #endif /* OPERATION_FW_STATION_CONFIG_H */
