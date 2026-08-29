@@ -174,7 +174,6 @@ void apply_downloaded_departures()
         message, sizeof(message), "Odjazdy: wynik=%d, liczba=%u", static_cast<int>(result),
         static_cast<unsigned int>(departures.count));
     sys_platform_debug_log(message);
-    last_refresh_ms = sys_platform_millis();
     if (has_selected_stop && !shows_picker && !shows_search)
     {
         render_departures();
@@ -407,6 +406,10 @@ void loop()
                     *available_stops, stop_picker.selected_index(), stop_picker.page_index(), now_ms,
                     true, network_status());
             }
+        }
+        else if (has_selected_stop && !shows_search)
+        {
+            render_departures();
         }
     }
 }
