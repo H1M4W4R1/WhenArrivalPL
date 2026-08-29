@@ -20,13 +20,15 @@ fw_stop_list_t *available_stops = nullptr;
 fw_stop_t selected_stop{};
 char station_name[fw_stop_name_max_length]{};
 uint32_t last_refresh_ms = 0u;
+uint32_t last_server_check_ms = 0u;
 bool shows_picker = false;
 bool shows_search = false;
 bool has_selected_stop = false;
-const fw_city_config_t *city_configs = nullptr;
-const char *city_names[5u]{};
-size_t city_count = 0u;
+bool is_server_available = false;
+fw_city_list_t cities{};
+const char *city_names[fw_city_capacity]{};
 size_t selected_city_index = 0u;
+static const uint32_t server_check_interval_ms = 30000u;
 
 typedef enum
 {
@@ -40,14 +42,37 @@ ui_network_status_t network_status()
 {
     return {
         sys_platform_network_is_ready(),
-        sys_platform_network_rssi_dbm()
+        sys_platform_network_rssi_dbm(),
+        is_server_available
     };
+}
+
+fw_result_t load_cities()
+{
+    if (!sys_platform_network_is_ready())
+    {
+        is_server_available = false;
+        return fw_result_network_error;
+    }
+
+    const fw_result_t result = fw_city_catalogue_load(
+        sys_platform_http_client(), sys_platform_provider_url(), &cities);
+    is_server_available = result == fw_result_ok;
+    last_server_check_ms = sys_platform_millis();
+    if (is_server_available)
+    {
+        for (size_t index = 0u; index < cities.count; ++index)
+        {
+            city_names[index] = cities.items[index].name;
+        }
+    }
+    return result;
 }
 
 void render_city_picker()
 {
     departures_screen.render_city_picker(
-        city_names, city_count, stop_picker.selected_index(), network_status());
+        city_names, cities.count, stop_picker.selected_index(), stop_picker.page_index(), network_status());
 }
 
 void refresh_departures()
@@ -59,6 +84,7 @@ void refresh_departures()
 
     departures_screen.render_loading(station_name, network_status());
     const fw_result_t result = local_api_source.get_departures(selected_stop.name, &departures);
+    is_server_available = result == fw_result_ok;
     char message[80u];
     (void)snprintf(
         message, sizeof(message), "Odjazdy: wynik=%d, liczba=%u", static_cast<int>(result),
@@ -79,8 +105,10 @@ fw_result_t search_stops()
     }
 
     departures_screen.render_message(
-        city_configs[selected_city_index].name, "Szukanie...", network_status());
-    return local_api_source.find_stops(stop_search.query(), available_stops);
+        cities.items[selected_city_index].name, "Szukanie...", network_status());
+    const fw_result_t result = local_api_source.find_stops(stop_search.query(), available_stops);
+    is_server_available = result == fw_result_ok;
+    return result;
 }
 
 void show_stop_results(const fw_result_t result)
@@ -91,14 +119,14 @@ void show_stop_results(const fw_result_t result)
         shows_picker = true;
         stop_picker.open();
         departures_screen.render_stop_picker(
-            *available_stops, stop_picker.selected_index(), stop_picker.scroll_offset(), network_status());
+            *available_stops, stop_picker.selected_index(), stop_picker.page_index(), network_status());
         return;
     }
 
     shows_search = false;
     shows_picker = false;
     departures_screen.render_message(
-        city_configs[selected_city_index].name,
+        cities.items[selected_city_index].name,
         result == fw_result_ok ? "Brak wynikow" : "Blad polaczenia",
         network_status());
     picker_stage = app_picker_stage_city;
@@ -119,14 +147,10 @@ void setup()
         sys_platform_debug_log("PSRAM: brak miejsca na liste przystankow");
     }
 
-    city_configs = fw_city_catalogue_get(&city_count);
-    if (city_count > 5u)
+    const fw_result_t city_result = load_cities();
+    if (city_result != fw_result_ok)
     {
-        city_count = 5u;
-    }
-    for (size_t index = 0u; index < city_count; ++index)
-    {
-        city_names[index] = city_configs[index].name;
+        sys_platform_debug_log("Serwer: /status niedostepny");
     }
 
     (void)snprintf(station_name, sizeof(station_name), "%s", "Wybierz miasto");
@@ -167,11 +191,11 @@ void loop()
     }
 
     const size_t item_count = picker_stage == app_picker_stage_city ?
-        city_count : (available_stops == nullptr ? 0u : available_stops->count);
-    const size_t visible_rows = picker_stage == app_picker_stage_city ?
-        city_count : departures_screen.stop_picker_visible_rows();
+        cities.count : (available_stops == nullptr ? 0u : available_stops->count);
+    const size_t visible_rows = departures_screen.stop_picker_visible_rows();
     const ui_stop_picker_event_t event = stop_picker.update_touch(
-        is_touched, touch_y, now_ms, item_count, 34, 54, visible_rows);
+        is_touched, touch_x, touch_y, now_ms, item_count, 34, 54, visible_rows,
+        sys_platform_display()->width(), sys_platform_display()->height());
 
     if (event == ui_stop_picker_event_opened)
     {
@@ -185,7 +209,7 @@ void loop()
         {
             selected_city_index = stop_picker.selected_index();
             local_api_source.set_provider(
-                city_configs[selected_city_index].provider_slug, city_configs[selected_city_index].name);
+                cities.items[selected_city_index].provider_slug, cities.items[selected_city_index].name);
             has_selected_stop = false;
             shows_picker = false;
             shows_search = true;
@@ -210,7 +234,16 @@ void loop()
              (picker_stage == app_picker_stage_stop) && shows_picker && (available_stops != nullptr))
     {
         departures_screen.render_stop_picker(
-            *available_stops, stop_picker.selected_index(), stop_picker.scroll_offset(), network_status());
+            *available_stops, stop_picker.selected_index(), stop_picker.page_index(), network_status());
+    }
+
+    if ((now_ms - last_server_check_ms) >= server_check_interval_ms)
+    {
+        (void)load_cities();
+        if (shows_picker && (picker_stage == app_picker_stage_city))
+        {
+            render_city_picker();
+        }
     }
 
     if (has_selected_stop && !shows_picker && ((now_ms - last_refresh_ms) >= 30000u))

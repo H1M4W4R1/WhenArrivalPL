@@ -9,6 +9,7 @@ typedef struct
 {
     bool is_connected;
     int16_t rssi_dbm;
+    bool is_server_available;
 } ui_network_status_t;
 
 class ui_departures_screen_t
@@ -28,11 +29,12 @@ public:
         const char *const *city_names,
         size_t city_count,
         size_t selected_index,
+        size_t page_index,
         const ui_network_status_t &network_status) const;
     void render_stop_picker(
         const fw_stop_list_t &stops,
         size_t selected_index,
-        size_t scroll_offset,
+        size_t page_index,
         const ui_network_status_t &network_status) const;
     void render_stop_search(
         const char *query,

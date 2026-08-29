@@ -11,9 +11,33 @@ static const uint16_t color_black = 0x0000u;
 static const uint16_t color_gray = 0x7befu;
 static const uint16_t color_red = 0xf800u;
 static const uint16_t color_green = 0x07e0u;
+static const uint16_t color_yellow = 0xffe0u;
+static const uint16_t color_orange = 0xfd20u;
 static const int16_t header_height = 42;
 static const int16_t picker_first_row_y = 54;
 static const int16_t picker_row_height = 34;
+static const int16_t pagination_height = 38;
+
+uint16_t wifi_indicator_color(const ui_network_status_t &network_status)
+{
+    if (!network_status.is_connected)
+    {
+        return color_red;
+    }
+    if (network_status.rssi_dbm >= -60)
+    {
+        return color_green;
+    }
+    if (network_status.rssi_dbm >= -70)
+    {
+        return color_yellow;
+    }
+    if (network_status.rssi_dbm >= -80)
+    {
+        return color_orange;
+    }
+    return color_red;
+}
 
 void draw_button(
     ui_display_t *const display,
@@ -50,20 +74,11 @@ void ui_departures_screen_t::render_header(
     _display->fill_rectangle({0, 0, _display->width(), header_height}, color_dark_blue);
     _display->draw_text(10, 13, title, color_white, 2u);
 
-    char indicator[16];
-    const uint16_t indicator_color = network_status.is_connected ? color_green : color_red;
-    if (network_status.is_connected)
-    {
-        (void)snprintf(
-            indicator, sizeof(indicator), "WiFi %d", static_cast<int>(network_status.rssi_dbm));
-    }
-    else
-    {
-        (void)snprintf(indicator, sizeof(indicator), "%s", "WiFi OFF");
-    }
-
-    const int16_t indicator_x = static_cast<int16_t>(_display->width() - 128);
-    _display->draw_text(indicator_x, 13, indicator, indicator_color, 2u);
+    const int16_t wifi_x = static_cast<int16_t>(_display->width() - 90);
+    const int16_t server_x = static_cast<int16_t>(_display->width() - 42);
+    _display->draw_text(wifi_x, 15, "WiFi", wifi_indicator_color(network_status), 1u);
+    _display->draw_text(
+        server_x, 15, "Srv", network_status.is_server_available ? color_green : color_red, 1u);
 }
 
 void ui_departures_screen_t::render_loading(
@@ -127,6 +142,7 @@ void ui_departures_screen_t::render_city_picker(
     const char *const *const city_names,
     const size_t city_count,
     const size_t selected_index,
+    const size_t page_index,
     const ui_network_status_t &network_status) const
 {
     if ((_display == nullptr) || (city_names == nullptr))
@@ -136,18 +152,44 @@ void ui_departures_screen_t::render_city_picker(
 
     _display->fill_screen(color_white);
     render_header("Wybierz miasto", network_status);
-    for (size_t index = 0u; index < city_count; ++index)
+    const size_t visible_rows = stop_picker_visible_rows();
+    if (city_count == 0u)
     {
-        const int16_t row_y = static_cast<int16_t>(54 + index * 34u);
+        _display->draw_text(10, picker_first_row_y, "Brak miast", color_black, 2u);
+    }
+    const size_t first_index = page_index * visible_rows;
+    const size_t last_index = first_index + visible_rows < city_count ?
+        first_index + visible_rows : city_count;
+    for (size_t index = first_index; index < last_index; ++index)
+    {
+        const size_t visible_index = index - first_index;
+        const int16_t row_y = static_cast<int16_t>(54 + visible_index * 34u);
         const uint16_t color = index == selected_index ? color_dark_blue : color_black;
         _display->draw_text(10, row_y, city_names[index], color, 2u);
     }
+
+    const size_t page_count = city_count == 0u ? 1u :
+        (city_count + visible_rows - 1u) / visible_rows;
+    const int16_t pagination_y = static_cast<int16_t>(_display->height() - pagination_height);
+    const int16_t button_width = static_cast<int16_t>(_display->width() / 3);
+    draw_button(_display, {0, pagination_y, button_width, pagination_height}, "<", color_dark_blue);
+    draw_button(
+        _display,
+        {static_cast<int16_t>(2 * button_width), pagination_y,
+         static_cast<int16_t>(_display->width() - 2 * button_width), pagination_height},
+        ">", color_dark_blue);
+    char page_label[16u];
+    (void)snprintf(page_label, sizeof(page_label), "%u/%u", static_cast<unsigned int>(page_index + 1u),
+        static_cast<unsigned int>(page_count));
+    _display->draw_text(
+        static_cast<int16_t>(button_width + 8), static_cast<int16_t>(pagination_y + 10), page_label,
+        color_black, 2u);
 }
 
 void ui_departures_screen_t::render_stop_picker(
     const fw_stop_list_t &stops,
     const size_t selected_index,
-    const size_t scroll_offset,
+    const size_t page_index,
     const ui_network_status_t &network_status) const
 {
     if (_display == nullptr)
@@ -164,29 +206,33 @@ void ui_departures_screen_t::render_stop_picker(
     }
 
     const size_t visible_rows = stop_picker_visible_rows();
-    const size_t last_index = scroll_offset + visible_rows < stops.count ?
-        scroll_offset + visible_rows : stops.count;
-    for (size_t index = scroll_offset; index < last_index; ++index)
+    const size_t first_index = page_index * visible_rows;
+    const size_t last_index = first_index + visible_rows < stops.count ?
+        first_index + visible_rows : stops.count;
+    for (size_t index = first_index; index < last_index; ++index)
     {
-        const size_t visible_index = index - scroll_offset;
+        const size_t visible_index = index - first_index;
         const int16_t row_y = static_cast<int16_t>(
             picker_first_row_y + visible_index * static_cast<size_t>(picker_row_height));
         const uint16_t color = index == selected_index ? color_dark_blue : color_black;
         _display->draw_text(10, row_y, stops.items[index].name, color, 2u);
     }
 
-    if (scroll_offset > 0u)
-    {
-        _display->draw_text(
-            static_cast<int16_t>(_display->width() - 20), picker_first_row_y, "^", color_dark_blue, 2u);
-    }
-    if (last_index < stops.count)
-    {
-        const int16_t marker_y = static_cast<int16_t>(
-            picker_first_row_y + (visible_rows - 1u) * static_cast<size_t>(picker_row_height));
-        _display->draw_text(
-            static_cast<int16_t>(_display->width() - 20), marker_y, "v", color_dark_blue, 2u);
-    }
+    const size_t page_count = (stops.count + visible_rows - 1u) / visible_rows;
+    const int16_t pagination_y = static_cast<int16_t>(_display->height() - pagination_height);
+    const int16_t button_width = static_cast<int16_t>(_display->width() / 3);
+    draw_button(_display, {0, pagination_y, button_width, pagination_height}, "<", color_dark_blue);
+    draw_button(
+        _display,
+        {static_cast<int16_t>(2 * button_width), pagination_y,
+         static_cast<int16_t>(_display->width() - 2 * button_width), pagination_height},
+        ">", color_dark_blue);
+    char page_label[16u];
+    (void)snprintf(page_label, sizeof(page_label), "%u/%u", static_cast<unsigned int>(page_index + 1u),
+        static_cast<unsigned int>(page_count));
+    _display->draw_text(
+        static_cast<int16_t>(button_width + 8), static_cast<int16_t>(pagination_y + 10), page_label,
+        color_black, 2u);
 }
 
 void ui_departures_screen_t::render_stop_search(
@@ -271,12 +317,13 @@ void ui_departures_screen_t::render_stop_search(
 
 size_t ui_departures_screen_t::stop_picker_visible_rows() const
 {
-    if ((_display == nullptr) || (_display->height() <= picker_first_row_y))
+    if ((_display == nullptr) || (_display->height() <= (picker_first_row_y + pagination_height)))
     {
         return 1u;
     }
 
-    const int16_t available_height = static_cast<int16_t>(_display->height() - picker_first_row_y);
+    const int16_t available_height = static_cast<int16_t>(
+        _display->height() - picker_first_row_y - pagination_height);
     const size_t visible_rows = static_cast<size_t>(available_height / picker_row_height);
     return visible_rows > 0u ? visible_rows : 1u;
 }

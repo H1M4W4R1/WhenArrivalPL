@@ -42,7 +42,9 @@ Alternatywnie karta microSD (FAT32) może zawierać `/config.json`:
 - Core S3 pokazuje klawiaturę telefoniczną: kolejne stuknięcia tego samego pola przez 0,9 s przełączają literę (`2 ABC`, `3 DEF` itd.).
 - `WROC` wraca do miast, `USUN` kasuje ostatni znak, a `SZUKAJ` pobiera maksymalnie 255 pasujących przystanków z lokalnego API.
 
-Po wyborze przystanku ekran odświeża odjazdy co 30 sekund. Zielone `WiFi -NN` oznacza połączenie i siłę sygnału w dBm; czerwone `WiFi OFF` oznacza brak sieci.
+Po wyborze przystanku ekran odświeża odjazdy co 30 sekund. W nagłówku `WiFi` ma kolor zależny od RSSI: zielony (silny), żółty, pomarańczowy lub czerwony (słaby/brak połączenia). `Srv` jest zielone po udanym połączeniu z serwerem, czerwone gdy serwer nie odpowiada.
+
+Lista miast jest pobierana przy starcie i co 30 sekund z `GET /status`. Aktualne API zwraca slugi providerów, więc są one używane jako nazwy, chyba że odpowiedź zawiera opcjonalne pole `city`. Długie listy miast i przystanków mają strony; użyj przycisków `<` i `>` na dole ekranu.
 
 ## Architektura
 
@@ -58,6 +60,7 @@ Adresy używane przez firmware:
 ```text
 GET /transit/{provider}/stops?query={fragment}
 GET /transit/{provider}/schedule/{stop_name}/12
+GET /status
 ```
 
-Providerami dla obecnego wyboru miast są `warsaw`, `lodz`, `gdansk`, `wroclaw` i `poznan`. Serwer IOT Open API obsługuje więcej providerów; rozszerzenie listy ekranowej wymaga tylko wpisu w `src/operation/fw_city_catalogue.cpp`.
+`/status` zwraca listę providerów aktywnych na danym serwerze, więc firmware nie utrzymuje własnej, stałej listy miast.
