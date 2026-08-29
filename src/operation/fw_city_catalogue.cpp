@@ -7,6 +7,10 @@ namespace
 {
 static const size_t status_response_max_length = 4096u;
 static char status_response[status_response_max_length];
+/* The background network worker is intentionally single-threaded. Keeping its
+ * working list static prevents a 2.8 KiB temporary from exhausting its task
+ * stack while it parses GET /status. */
+static fw_city_list_t parsed_cities;
 
 bool copy_text(char *const destination, const size_t destination_size, const char *const source)
 {
@@ -153,7 +157,7 @@ fw_result_t fw_city_catalogue_load(
         return result;
     }
 
-    fw_city_list_t updated_cities{};
+    parsed_cities = {};
     const char *const response_end = status_response + response_length;
     const char *cursor = skip_whitespace(status_response, response_end);
     if ((cursor >= response_end) || (*cursor != '['))
@@ -172,12 +176,12 @@ fw_result_t fw_city_catalogue_load(
         {
             return fw_result_parse_error;
         }
-        if (updated_cities.count >= fw_city_capacity)
+        if (parsed_cities.count >= fw_city_capacity)
         {
             return fw_result_buffer_too_small;
         }
 
-        fw_city_config_t &item = updated_cities.items[updated_cities.count];
+        fw_city_config_t &item = parsed_cities.items[parsed_cities.count];
         if (!read_object_string(
                 object, object_end, "\"slug\"", item.provider_slug, sizeof(item.provider_slug)))
         {
@@ -189,10 +193,10 @@ fw_result_t fw_city_catalogue_load(
             return fw_result_parse_error;
         }
 
-        ++updated_cities.count;
+        ++parsed_cities.count;
         cursor = object_end + 1;
     }
 
-    *cities = updated_cities;
+    *cities = parsed_cities;
     return fw_result_ok;
 }

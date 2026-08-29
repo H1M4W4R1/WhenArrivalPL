@@ -23,6 +23,7 @@ fw_stop_t selected_stop{};
 char station_name[fw_stop_name_max_length]{};
 char download_stop_name[fw_stop_name_max_length]{};
 char download_stop_query[fw_stop_name_max_length]{};
+size_t download_departure_count = 1u;
 uint32_t last_refresh_ms = 0u;
 uint32_t last_server_check_ms = 0u;
 uint32_t last_animation_ms = 0u;
@@ -67,10 +68,8 @@ ui_network_status_t network_status()
 void download_cities(void *const user_context)
 {
     (void)user_context;
-    fw_city_list_t next_cities{};
     const fw_result_t result = fw_city_catalogue_load(
-        sys_platform_http_client(), sys_platform_provider_url(), &next_cities);
-    downloaded_cities = next_cities;
+        sys_platform_http_client(), sys_platform_provider_url(), &downloaded_cities);
     downloaded_cities_result = result;
     has_downloaded_cities = true;
 }
@@ -132,7 +131,8 @@ void download_departures(void *const user_context)
 {
     (void)user_context;
     fw_departure_list_t next_departures{};
-    const fw_result_t result = local_api_source.get_departures(download_stop_name, &next_departures);
+    const fw_result_t result = local_api_source.get_departures(
+        download_stop_name, download_departure_count, &next_departures);
     downloaded_departures = next_departures;
     downloaded_departures_result = result;
     has_downloaded_departures = true;
@@ -147,6 +147,7 @@ void request_departures()
     }
 
     (void)snprintf(download_stop_name, sizeof(download_stop_name), "%s", selected_stop.name);
+    download_departure_count = departures_screen.departure_visible_rows();
     has_downloaded_departures = false;
     if (!sys_platform_queue_background_task(download_departures, nullptr))
     {

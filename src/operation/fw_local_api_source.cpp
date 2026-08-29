@@ -360,10 +360,12 @@ fw_result_t fw_local_api_source_t::find_stops(const char *const query, fw_stop_l
 
 fw_result_t fw_local_api_source_t::get_departures(
     const char *const stop_name,
+    const size_t requested_count,
     fw_departure_list_t *const departures)
 {
     if ((_http_client == nullptr) || (stop_name == nullptr) || (stop_name[0u] == '\0') ||
-        (departures == nullptr))
+        (departures == nullptr) || (requested_count == 0u) ||
+        (requested_count > fw_departure_capacity))
     {
         return fw_result_invalid_argument;
     }
@@ -374,9 +376,14 @@ fw_result_t fw_local_api_source_t::get_departures(
         return fw_result_invalid_argument;
     }
 
-    if (!append_text(url, sizeof(url), "/schedule/") ||
+    char count_text[4u];
+    const int count_length = snprintf(
+        count_text, sizeof(count_text), "%u", static_cast<unsigned int>(requested_count));
+    if ((count_length < 0) || (static_cast<size_t>(count_length) >= sizeof(count_text)) ||
+        !append_text(url, sizeof(url), "/schedule/") ||
         !append_url_encoded(url, sizeof(url), stop_name) ||
-        !append_text(url, sizeof(url), "/12"))
+        !append_text(url, sizeof(url), "/") ||
+        !append_text(url, sizeof(url), count_text))
     {
         return fw_result_buffer_too_small;
     }

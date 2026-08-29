@@ -17,6 +17,9 @@ static const int16_t header_height = 42;
 static const int16_t picker_first_row_y = 54;
 static const int16_t picker_row_height = 34;
 static const int16_t pagination_height = 38;
+static const int16_t departure_first_row_y = 52;
+static const int16_t departure_row_height = 34;
+static const int16_t departure_text_height = 20;
 /* Change this one value to adjust the marquee pace. */
 static const uint32_t marquee_character_step_ms = 500u;
 static const int16_t marquee_gap_px = 24;
@@ -142,8 +145,9 @@ void ui_departures_screen_t::render_departures(
 
     for (size_t index = 0u; index < departures.count; ++index)
     {
-        const int16_t row_y = static_cast<int16_t>(52 + index * 34u);
-        if ((row_y + 20) >= _display->height())
+        const int16_t row_y = static_cast<int16_t>(
+            departure_first_row_y + index * static_cast<size_t>(departure_row_height));
+        if ((row_y + departure_text_height) >= _display->height())
         {
             break;
         }
@@ -374,6 +378,20 @@ void ui_departures_screen_t::render_stop_search(
         {static_cast<int16_t>(2 * action_width), action_y,
          static_cast<int16_t>(_display->width() - 2 * action_width), action_height},
         "SZUK", color_green);
+}
+
+size_t ui_departures_screen_t::departure_visible_rows() const
+{
+    if ((_display == nullptr) ||
+        (_display->height() <= (departure_first_row_y + departure_text_height)))
+    {
+        return 1u;
+    }
+
+    const int16_t available_height = static_cast<int16_t>(
+        _display->height() - departure_first_row_y - departure_text_height - 1);
+    const size_t visible_rows = static_cast<size_t>(available_height / departure_row_height) + 1u;
+    return visible_rows < fw_departure_capacity ? visible_rows : fw_departure_capacity;
 }
 
 size_t ui_departures_screen_t::stop_picker_visible_rows() const

@@ -14,6 +14,7 @@ public:
     virtual fw_result_t find_stops(const char *query, fw_stop_list_t *stops) = 0;
     virtual fw_result_t get_departures(
         const char *stop_id,
+        size_t requested_count,
         fw_departure_list_t *departures) = 0;
 };
 

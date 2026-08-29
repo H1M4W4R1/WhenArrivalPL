@@ -26,7 +26,9 @@ namespace
 static const size_t wifi_ssid_max_length = 33u;
 static const size_t wifi_password_max_length = 65u;
 static const size_t provider_url_max_length = 128u;
-static const uint32_t background_task_stack_words = 6144u;
+/* ESP-IDF interprets xTaskCreatePinnedToCore stack depth as bytes. HTTP client
+ * calls need room for SDK frames in addition to firmware parsing. */
+static const uint32_t background_task_stack_bytes = 10240u;
 static const uint32_t http_idle_timeout_ms = 60000u;
 
 typedef struct
@@ -242,6 +244,7 @@ public:
             log_http_failure("get", "begin", 0);
             return fw_result_network_error;
         }
+        client.setReuse(false);
         client.setTimeout(static_cast<uint16_t>(http_idle_timeout_ms));
 
         const int status_code = client.GET();
@@ -253,13 +256,27 @@ public:
         }
 
         WiFiClient *const stream = client.getStreamPtr();
+        const int response_size = client.getSize();
+        const bool has_response_size = response_size >= 0;
+        const size_t expected_length = has_response_size ?
+            static_cast<size_t>(response_size) : 0u;
         size_t copied = 0u;
         uint32_t last_data_ms = millis();
-        while (client.connected() || (stream->available() > 0u))
+        while (!has_response_size || (copied < expected_length))
         {
             const size_t available = stream->available();
             if (available == 0u)
             {
+                if (!client.connected())
+                {
+                    if (has_response_size)
+                    {
+                        log_http_failure("get", "incomplete_response", 0);
+                        client.end();
+                        return fw_result_network_error;
+                    }
+                    break;
+                }
                 if ((millis() - last_data_ms) >= http_idle_timeout_ms)
                 {
                     log_http_failure("get", "idle_timeout", 0);
@@ -278,13 +295,19 @@ public:
                 return fw_result_buffer_too_small;
             }
 
-            const size_t requested = available < space ? available : space;
+            size_t requested = available < space ? available : space;
+            if (has_response_size)
+            {
+                const size_t remaining = expected_length - copied;
+                requested = requested < remaining ? requested : remaining;
+            }
             const size_t read_count = stream->readBytes(
                 reinterpret_cast<uint8_t *>(&response_buffer[copied]), requested);
             if (read_count == 0u)
             {
                 log_http_failure("get", "stream_read", 0);
-                break;
+                client.end();
+                return fw_result_network_error;
             }
 
             copied += read_count;
@@ -314,6 +337,7 @@ public:
             log_http_failure("get_stream", "begin", 0);
             return fw_result_network_error;
         }
+        client.setReuse(false);
         client.setTimeout(static_cast<uint16_t>(idle_timeout_ms));
 
         const int status_code = client.GET();
@@ -325,13 +349,28 @@ public:
         }
 
         WiFiClient *const stream = client.getStreamPtr();
+        const int response_size = client.getSize();
+        const bool has_response_size = response_size >= 0;
+        const size_t expected_length = has_response_size ?
+            static_cast<size_t>(response_size) : 0u;
+        size_t received = 0u;
         uint8_t buffer[512u];
         uint32_t last_data_ms = millis();
-        while (client.connected() || (stream->available() > 0u))
+        while (!has_response_size || (received < expected_length))
         {
             const size_t available = stream->available();
             if (available == 0u)
             {
+                if (!client.connected())
+                {
+                    if (has_response_size)
+                    {
+                        log_http_failure("get_stream", "incomplete_response", 0);
+                        client.end();
+                        return fw_result_network_error;
+                    }
+                    break;
+                }
                 if ((idle_timeout_ms > 0u) && ((millis() - last_data_ms) >= idle_timeout_ms))
                 {
                     log_http_failure("get_stream", "idle_timeout", 0);
@@ -343,7 +382,12 @@ public:
                 continue;
             }
 
-            const size_t requested = available < sizeof(buffer) ? available : sizeof(buffer);
+            size_t requested = available < sizeof(buffer) ? available : sizeof(buffer);
+            if (has_response_size)
+            {
+                const size_t remaining = expected_length - received;
+                requested = requested < remaining ? requested : remaining;
+            }
             const size_t read_count = stream->readBytes(buffer, requested);
             if (read_count == 0u)
             {
@@ -352,6 +396,7 @@ public:
                 return fw_result_network_error;
             }
 
+            received += read_count;
             bool transfer_complete = false;
             const fw_result_t callback_result = callback(
                 buffer, read_count, user_context, &transfer_complete);
@@ -394,7 +439,7 @@ void sys_platform_initialize(void)
     const BaseType_t create_result = xTaskCreatePinnedToCore(
         background_task,
         "network_worker",
-        background_task_stack_words,
+        background_task_stack_bytes,
         nullptr,
         1u,
         &background_task_handle,

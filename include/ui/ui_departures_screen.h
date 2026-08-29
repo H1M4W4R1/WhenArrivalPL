@@ -42,6 +42,7 @@ public:
         const char *query,
         bool has_full_keyboard,
         const ui_network_status_t &network_status) const;
+    size_t departure_visible_rows() const;
     size_t stop_picker_visible_rows() const;
     void render_message(
         const char *title,

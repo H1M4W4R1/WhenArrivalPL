@@ -17,6 +17,7 @@ public:
     fw_result_t find_stops(const char *query, fw_stop_list_t *stops) override;
     fw_result_t get_departures(
         const char *stop_name,
+        size_t requested_count,
         fw_departure_list_t *departures) override;
 
 private:
