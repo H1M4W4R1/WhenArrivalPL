@@ -20,6 +20,7 @@ fw_departure_list_t downloaded_departures{};
 fw_city_list_t downloaded_cities{};
 fw_stop_list_t *available_stops = nullptr;
 fw_stop_t selected_stop{};
+sys_platform_station_config_t saved_station_config{};
 char station_name[fw_stop_name_max_length]{};
 char download_stop_name[fw_stop_name_max_length]{};
 char download_stop_query[fw_stop_name_max_length]{};
@@ -55,6 +56,28 @@ app_picker_stage_t picker_stage = app_picker_stage_city;
 void render_city_picker(bool refresh_content_only = false);
 void render_departures();
 void show_stop_results(fw_result_t result);
+
+bool copy_station_config_value(
+    char *const destination,
+    const size_t destination_size,
+    const char *const source)
+{
+    if ((destination == nullptr) || (destination_size == 0u) || (source == nullptr))
+    {
+        return false;
+    }
+
+    const int written = snprintf(destination, destination_size, "%s", source);
+    return (written >= 0) && (static_cast<size_t>(written) < destination_size);
+}
+
+void save_selected_station()
+{
+    if (!sys_platform_save_station_config(&saved_station_config))
+    {
+        sys_platform_debug_log("Konfiguracja przystanku nie zostala zapisana");
+    }
+}
 
 ui_network_status_t network_status()
 {
@@ -259,10 +282,33 @@ void setup()
         sys_platform_debug_log("PSRAM: brak miejsca na liste przystankow");
     }
 
-    (void)snprintf(station_name, sizeof(station_name), "%s", "Wybierz miasto");
+    if (sys_platform_load_station_config(&saved_station_config))
+    {
+        local_api_source.set_provider(
+            saved_station_config.city_provider_slug, saved_station_config.city_name);
+        (void)copy_station_config_value(
+            selected_stop.id, sizeof(selected_stop.id), saved_station_config.stop_id);
+        (void)copy_station_config_value(
+            selected_stop.name, sizeof(selected_stop.name), saved_station_config.stop_name);
+        (void)copy_station_config_value(
+            station_name, sizeof(station_name), selected_stop.name);
+        has_selected_stop = true;
+    }
+    else
+    {
+        (void)snprintf(station_name, sizeof(station_name), "%s", "Wybierz miasto");
+    }
     departures_screen.render_departures(
         station_name, departures, sys_platform_local_time_s(), sys_platform_millis(), network_status());
-    request_cities();
+    last_server_check_ms = sys_platform_millis() - server_check_interval_ms;
+    if (has_selected_stop)
+    {
+        request_departures();
+    }
+    else
+    {
+        request_cities();
+    }
 }
 
 void loop()
@@ -345,8 +391,19 @@ void loop()
         else if (picker_stage == app_picker_stage_city)
         {
             selected_city_index = stop_picker.selected_index();
+            saved_station_config = {};
+            if (!copy_station_config_value(
+                    saved_station_config.city_provider_slug,
+                    sizeof(saved_station_config.city_provider_slug),
+                    cities.items[selected_city_index].provider_slug) ||
+                !copy_station_config_value(
+                    saved_station_config.city_name, sizeof(saved_station_config.city_name),
+                    cities.items[selected_city_index].name))
+            {
+                return;
+            }
             local_api_source.set_provider(
-                cities.items[selected_city_index].provider_slug, cities.items[selected_city_index].name);
+                saved_station_config.city_provider_slug, saved_station_config.city_name);
             has_selected_stop = false;
             shows_picker = false;
             shows_search = true;
@@ -358,10 +415,19 @@ void loop()
                  (stop_picker.selected_index() < available_stops->count))
         {
             selected_stop = available_stops->items[stop_picker.selected_index()];
+            if (!copy_station_config_value(
+                    saved_station_config.stop_id, sizeof(saved_station_config.stop_id), selected_stop.id) ||
+                !copy_station_config_value(
+                    saved_station_config.stop_name, sizeof(saved_station_config.stop_name),
+                    selected_stop.name))
+            {
+                return;
+            }
             (void)snprintf(station_name, sizeof(station_name), "%s", selected_stop.name);
             has_selected_stop = true;
             shows_picker = false;
             stop_picker.reset();
+            save_selected_station();
             request_departures();
             render_departures();
         }

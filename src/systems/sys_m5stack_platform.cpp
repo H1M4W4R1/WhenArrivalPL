@@ -8,6 +8,7 @@
 #include <SD.h>
 #include <HTTPClient.h>
 #include <M5Unified.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
@@ -27,6 +28,9 @@ static const size_t wifi_ssid_max_length = 33u;
 static const size_t wifi_password_max_length = 65u;
 static const size_t provider_url_max_length = 128u;
 static const int16_t display_font_character_width = 6;
+static const char *const sd_config_path = "/config.json";
+static const char *const sd_config_temporary_path = "/config.tmp";
+static const char *const nvs_namespace = "moja_stacja";
 /* ESP-IDF interprets xTaskCreatePinnedToCore stack depth as bytes. HTTP client
  * calls need room for SDK frames in addition to firmware parsing. */
 static const uint32_t background_task_stack_bytes = 10240u;
@@ -40,11 +44,13 @@ typedef struct
 } sys_provider_config_t;
 
 static sys_provider_config_t provider_config{};
-static StaticJsonDocument<512u> config_document;
+static sys_platform_station_config_t saved_station_config{};
+static StaticJsonDocument<768u> config_document;
 static TaskHandle_t background_task_handle = nullptr;
 static sys_platform_background_callback_t background_callback = nullptr;
 static void *background_context = nullptr;
 static volatile bool is_background_task_busy = false;
+static bool is_sd_card_available = false;
 
 typedef enum
 {
@@ -221,6 +227,73 @@ bool copy_config_value(char *const destination, const size_t destination_size, c
     return (written >= 0) && (static_cast<size_t>(written) < destination_size);
 }
 
+bool has_saved_station_config(const sys_platform_station_config_t &station_config)
+{
+    return (station_config.city_provider_slug[0u] != '\0') &&
+           (station_config.stop_name[0u] != '\0');
+}
+
+void load_station_config_from_document()
+{
+    const JsonObject station = config_document["station"].as<JsonObject>();
+    const JsonObject city = station["city"].as<JsonObject>();
+    const JsonObject stop = station["stop"].as<JsonObject>();
+    (void)copy_config_value(
+        saved_station_config.city_name, sizeof(saved_station_config.city_name), city["name"] | "");
+    (void)copy_config_value(
+        saved_station_config.city_provider_slug, sizeof(saved_station_config.city_provider_slug),
+        city["provider_slug"] | "");
+    (void)copy_config_value(
+        saved_station_config.stop_id, sizeof(saved_station_config.stop_id), stop["id"] | "");
+    (void)copy_config_value(
+        saved_station_config.stop_name, sizeof(saved_station_config.stop_name), stop["name"] | "");
+}
+
+bool load_nvs_station_config()
+{
+    Preferences preferences;
+    if (!preferences.begin(nvs_namespace, true) || !preferences.getBool("station", false))
+    {
+        preferences.end();
+        return false;
+    }
+
+    saved_station_config = {};
+    const size_t city_name_length = preferences.getString(
+        "city_name", saved_station_config.city_name, sizeof(saved_station_config.city_name));
+    const size_t city_slug_length = preferences.getString(
+        "city_slug", saved_station_config.city_provider_slug,
+        sizeof(saved_station_config.city_provider_slug));
+    const size_t stop_id_length = preferences.getString(
+        "stop_id", saved_station_config.stop_id, sizeof(saved_station_config.stop_id));
+    const size_t stop_name_length = preferences.getString(
+        "stop_name", saved_station_config.stop_name, sizeof(saved_station_config.stop_name));
+    preferences.end();
+    return (city_name_length > 0u) && (city_slug_length > 0u) &&
+           (stop_id_length > 0u) && (stop_name_length > 0u) &&
+           has_saved_station_config(saved_station_config);
+}
+
+bool save_nvs_station_config(const sys_platform_station_config_t &station_config)
+{
+    Preferences preferences;
+    if (!preferences.begin(nvs_namespace, false))
+    {
+        return false;
+    }
+
+    bool is_saved = preferences.putBool("station", false) == 1u;
+    is_saved = is_saved &&
+        (preferences.putString("city_name", station_config.city_name) > 0u);
+    is_saved = is_saved &&
+        (preferences.putString("city_slug", station_config.city_provider_slug) > 0u);
+    is_saved = is_saved && (preferences.putString("stop_id", station_config.stop_id) > 0u);
+    is_saved = is_saved && (preferences.putString("stop_name", station_config.stop_name) > 0u);
+    is_saved = is_saved && (preferences.putBool("station", true) == 1u);
+    preferences.end();
+    return is_saved;
+}
+
 void load_compile_time_config()
 {
     (void)copy_config_value(
@@ -233,6 +306,11 @@ void load_compile_time_config()
 
 bool initialize_sd_card()
 {
+    if (is_sd_card_available)
+    {
+        return true;
+    }
+
     if (!M5.hasSD())
     {
         return false;
@@ -248,7 +326,56 @@ bool initialize_sd_card()
     }
 
     SPI.begin(clock_pin, miso_pin, mosi_pin, chip_select_pin);
-    return SD.begin(static_cast<uint8_t>(chip_select_pin), SPI, 25000000u);
+    is_sd_card_available = SD.begin(static_cast<uint8_t>(chip_select_pin), SPI, 25000000u);
+    return is_sd_card_available;
+}
+
+bool write_sd_card_config()
+{
+    if (!is_sd_card_available)
+    {
+        return false;
+    }
+
+    JsonObject wifi = config_document["wifi"].to<JsonObject>();
+    wifi["ssid"] = provider_config.wifi_ssid;
+    wifi["password"] = provider_config.wifi_password;
+    config_document["provider_url"] = provider_config.provider_url;
+    JsonObject station = config_document["station"].to<JsonObject>();
+    JsonObject city = station["city"].to<JsonObject>();
+    city["name"] = saved_station_config.city_name;
+    city["provider_slug"] = saved_station_config.city_provider_slug;
+    JsonObject stop = station["stop"].to<JsonObject>();
+    stop["id"] = saved_station_config.stop_id;
+    stop["name"] = saved_station_config.stop_name;
+
+    File config_file = SD.open(sd_config_temporary_path, FILE_WRITE);
+    if (!config_file)
+    {
+        sys_platform_debug_log("SD: nie mozna zapisac config.tmp");
+        return false;
+    }
+
+    const size_t written = serializeJson(config_document, config_file);
+    config_file.close();
+    if (written == 0u)
+    {
+        (void)SD.remove(sd_config_temporary_path);
+        sys_platform_debug_log("SD: nie mozna zapisac config.json");
+        return false;
+    }
+    if (SD.exists(sd_config_path) && !SD.remove(sd_config_path))
+    {
+        (void)SD.remove(sd_config_temporary_path);
+        sys_platform_debug_log("SD: nie mozna zastapic config.json");
+        return false;
+    }
+    if (!SD.rename(sd_config_temporary_path, sd_config_path))
+    {
+        sys_platform_debug_log("SD: nie mozna aktywowac config.json");
+        return false;
+    }
+    return true;
 }
 
 void load_sd_card_config()
@@ -259,7 +386,7 @@ void load_sd_card_config()
         return;
     }
 
-    File config_file = SD.open("/config.json", FILE_READ);
+    File config_file = SD.open(sd_config_path, FILE_READ);
     if (!config_file)
     {
         sys_platform_debug_log("SD: brak /config.json");
@@ -283,6 +410,8 @@ void load_sd_card_config()
     (void)copy_config_value(
         provider_config.provider_url, sizeof(provider_config.provider_url),
         config_document["provider_url"] | "");
+    saved_station_config = {};
+    load_station_config_from_document();
 }
 
 const char *http_error_name(const int status_code)
@@ -598,8 +727,17 @@ void sys_platform_initialize(void)
     }
 
     provider_config = {};
+    saved_station_config = {};
     load_compile_time_config();
     load_sd_card_config();
+    if (is_sd_card_available && !SD.exists(sd_config_path))
+    {
+        (void)write_sd_card_config();
+    }
+    else if (!is_sd_card_available && !load_nvs_station_config())
+    {
+        saved_station_config = {};
+    }
 
     if (provider_config.wifi_ssid[0u] == '\0')
     {
@@ -645,6 +783,35 @@ driver_http_client_t *sys_platform_http_client(void)
 const char *sys_platform_provider_url(void)
 {
     return provider_config.provider_url;
+}
+
+bool sys_platform_load_station_config(sys_platform_station_config_t *const station_config)
+{
+    if (station_config == nullptr)
+    {
+        return false;
+    }
+
+    *station_config = saved_station_config;
+    return has_saved_station_config(saved_station_config);
+}
+
+bool sys_platform_save_station_config(const sys_platform_station_config_t *const station_config)
+{
+    if ((station_config == nullptr) || !has_saved_station_config(*station_config))
+    {
+        return false;
+    }
+
+    const sys_platform_station_config_t previous_station_config = saved_station_config;
+    saved_station_config = *station_config;
+    const bool is_saved = is_sd_card_available ? write_sd_card_config() :
+        save_nvs_station_config(saved_station_config);
+    if (!is_saved)
+    {
+        saved_station_config = previous_station_config;
+    }
+    return is_saved;
 }
 
 bool sys_platform_has_full_keyboard(void)

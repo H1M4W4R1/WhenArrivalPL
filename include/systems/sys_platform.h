@@ -13,10 +13,20 @@
  * same functions in its own source file and never needs an M5 header. */
 typedef void (*sys_platform_background_callback_t)(void *user_context);
 
+typedef struct
+{
+    char city_name[56u];
+    char city_provider_slug[32u];
+    char stop_id[32u];
+    char stop_name[56u];
+} sys_platform_station_config_t;
+
 void sys_platform_initialize(void);
 ui_display_t *sys_platform_display(void);
 driver_http_client_t *sys_platform_http_client(void);
 const char *sys_platform_provider_url(void);
+bool sys_platform_load_station_config(sys_platform_station_config_t *station_config);
+bool sys_platform_save_station_config(const sys_platform_station_config_t *station_config);
 bool sys_platform_has_full_keyboard(void);
 bool sys_platform_is_touched(void);
 int16_t sys_platform_touch_x(void);
