@@ -28,7 +28,8 @@ ui_stop_picker_event_t ui_stop_picker_t::update_touch(
     const int16_t first_row_y,
     const size_t visible_row_count,
     const int16_t screen_width,
-    const int16_t screen_height)
+    const int16_t screen_height,
+    const int16_t pagination_height)
 {
     if (is_touched)
     {
@@ -60,9 +61,9 @@ ui_stop_picker_event_t ui_stop_picker_t::update_touch(
             _ignore_release = false;
         }
         else if ((item_count > 0u) && (row_height > 0) && (visible_row_count > 0u) &&
-                 (screen_width > 0) && (screen_height > 0))
+                 (screen_width > 0) && (screen_height > 0) && (pagination_height > 0))
         {
-            const int16_t pagination_y = static_cast<int16_t>(screen_height - 38);
+            const int16_t pagination_y = static_cast<int16_t>(screen_height - pagination_height);
             const size_t page_count = (item_count + visible_row_count - 1u) / visible_row_count;
             if (_touch_start_y >= pagination_y)
             {
@@ -122,6 +123,13 @@ void ui_stop_picker_t::open()
     _ignore_release = false;
     _selected_index = 0u;
     _page_index = 0u;
+}
+
+void ui_stop_picker_t::reopen()
+{
+    _is_open = true;
+    _was_touched = false;
+    _ignore_release = false;
 }
 
 bool ui_stop_picker_t::is_open() const

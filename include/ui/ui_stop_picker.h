@@ -29,9 +29,11 @@ public:
         int16_t first_row_y,
         size_t visible_row_count,
         int16_t screen_width,
-        int16_t screen_height);
+        int16_t screen_height,
+        int16_t pagination_height);
     void reset();
     void open();
+    void reopen();
     bool is_open() const;
     size_t selected_index() const;
     size_t page_index() const;

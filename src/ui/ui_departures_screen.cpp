@@ -489,6 +489,21 @@ size_t ui_departures_screen_t::departure_visible_rows() const
     return visible_rows < fw_departure_capacity ? visible_rows : fw_departure_capacity;
 }
 
+int16_t ui_departures_screen_t::stop_picker_first_row_y() const
+{
+    return picker_first_row_y;
+}
+
+int16_t ui_departures_screen_t::stop_picker_row_height() const
+{
+    return picker_row_height;
+}
+
+int16_t ui_departures_screen_t::stop_picker_pagination_height() const
+{
+    return pagination_height;
+}
+
 size_t ui_departures_screen_t::stop_picker_visible_rows() const
 {
     if ((_display == nullptr) || (_display->height() <= (picker_first_row_y + pagination_height)))

@@ -341,7 +341,7 @@ void loop()
         {
             shows_search = false;
             picker_stage = app_picker_stage_city;
-            stop_picker.open();
+            stop_picker.reopen();
             render_city_picker();
         }
         else if (event == ui_stop_search_event_submitted)
@@ -363,8 +363,10 @@ void loop()
         cities.count : (available_stops == nullptr ? 0u : available_stops->count);
     const size_t visible_rows = departures_screen.stop_picker_visible_rows();
     const ui_stop_picker_event_t event = stop_picker.update_touch(
-        is_touched, touch_x, touch_y, now_ms, item_count, 34, 54, visible_rows,
-        sys_platform_display()->width(), sys_platform_display()->height());
+        is_touched, touch_x, touch_y, now_ms, item_count,
+        departures_screen.stop_picker_row_height(), departures_screen.stop_picker_first_row_y(),
+        visible_rows, sys_platform_display()->width(), sys_platform_display()->height(),
+        departures_screen.stop_picker_pagination_height());
 
     if (event == ui_stop_picker_event_opened)
     {
