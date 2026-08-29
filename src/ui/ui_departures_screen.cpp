@@ -36,11 +36,11 @@ static const int16_t picker_first_row_y = 54;
 static const int16_t picker_row_height = 34;
 static const int16_t pagination_height = 38;
 static const int16_t departure_first_row_y = 52;
-static const int16_t departure_row_height = 34;
+static const int16_t departure_row_height = 32;
 static const int16_t departure_text_height = 20;
 static const int16_t departure_route_area_width = 64;
 static const int16_t departure_time_area_width = 54;
-static const size_t departure_visible_row_count = 5u;
+static const size_t departure_visible_row_count = 6u;
 #endif
 /* Change this one value to adjust the marquee pace. */
 static const uint32_t marquee_character_step_ms = 500u;
