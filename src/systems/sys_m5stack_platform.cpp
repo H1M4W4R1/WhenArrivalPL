@@ -11,6 +11,8 @@
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <time.h>
 #pragma GCC diagnostic pop
 
@@ -24,6 +26,8 @@ namespace
 static const size_t wifi_ssid_max_length = 33u;
 static const size_t wifi_password_max_length = 65u;
 static const size_t provider_url_max_length = 128u;
+static const uint32_t background_task_stack_words = 6144u;
+static const uint32_t http_idle_timeout_ms = 60000u;
 
 typedef struct
 {
@@ -34,6 +38,26 @@ typedef struct
 
 static sys_provider_config_t provider_config{};
 static StaticJsonDocument<512u> config_document;
+static TaskHandle_t background_task_handle = nullptr;
+static sys_platform_background_callback_t background_callback = nullptr;
+static void *background_context = nullptr;
+static volatile bool is_background_task_busy = false;
+
+void background_task(void *const task_context)
+{
+    (void)task_context;
+    for (;;)
+    {
+        (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        const sys_platform_background_callback_t callback = background_callback;
+        void *const user_context = background_context;
+        if (callback != nullptr)
+        {
+            callback(user_context);
+        }
+        is_background_task_busy = false;
+    }
+}
 
 bool copy_config_value(char *const destination, const size_t destination_size, const char *const source)
 {
@@ -191,6 +215,7 @@ public:
     {
         M5.Display.setTextColor(color);
         M5.Display.setTextSize(text_scale);
+        M5.Display.setTextWrap(false, false);
         M5.Display.setCursor(x, y);
         M5.Display.print(text);
     }
@@ -217,6 +242,7 @@ public:
             log_http_failure("get", "begin", 0);
             return fw_result_network_error;
         }
+        client.setTimeout(static_cast<uint16_t>(http_idle_timeout_ms));
 
         const int status_code = client.GET();
         if (status_code != HTTP_CODE_OK)
@@ -229,11 +255,17 @@ public:
         WiFiClient *const stream = client.getStreamPtr();
         size_t copied = 0u;
         uint32_t last_data_ms = millis();
-        while (client.connected() && ((millis() - last_data_ms) < 5000u))
+        while (client.connected() || (stream->available() > 0u))
         {
             const size_t available = stream->available();
             if (available == 0u)
             {
+                if ((millis() - last_data_ms) >= http_idle_timeout_ms)
+                {
+                    log_http_failure("get", "idle_timeout", 0);
+                    client.end();
+                    return fw_result_network_error;
+                }
                 delay(1u);
                 continue;
             }
@@ -282,6 +314,7 @@ public:
             log_http_failure("get_stream", "begin", 0);
             return fw_result_network_error;
         }
+        client.setTimeout(static_cast<uint16_t>(idle_timeout_ms));
 
         const int status_code = client.GET();
         if (status_code != HTTP_CODE_OK)
@@ -358,6 +391,20 @@ void sys_platform_initialize(void)
     M5.begin(configuration);
     M5.Display.setRotation(1);
 
+    const BaseType_t create_result = xTaskCreatePinnedToCore(
+        background_task,
+        "network_worker",
+        background_task_stack_words,
+        nullptr,
+        1u,
+        &background_task_handle,
+        0);
+    if (create_result != pdPASS)
+    {
+        background_task_handle = nullptr;
+        sys_platform_debug_log("Zadanie tla: inicjalizacja nieudana");
+    }
+
     provider_config = {};
     load_compile_time_config();
     load_sd_card_config();
@@ -379,6 +426,8 @@ void sys_platform_initialize(void)
     is_network_ready = WiFi.status() == WL_CONNECTED;
     if (is_network_ready)
     {
+        (void)setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
+        tzset();
         configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
         char message[40];
         (void)snprintf(message, sizeof(message), "WiFi: polaczono, RSSI %d dBm", static_cast<int>(WiFi.RSSI()));
@@ -388,6 +437,7 @@ void sys_platform_initialize(void)
     {
         sys_platform_debug_log("WiFi: polaczenie nieudane");
     }
+
 }
 
 ui_display_t *sys_platform_display(void)
@@ -468,6 +518,25 @@ uint32_t sys_platform_epoch_s(void)
     return now > 0 ? static_cast<uint32_t>(now) : 0u;
 }
 
+uint32_t sys_platform_local_time_s(void)
+{
+    const time_t now = time(nullptr);
+    if (now <= 0)
+    {
+        return 0u;
+    }
+
+    struct tm local_time{};
+    if (localtime_r(&now, &local_time) == nullptr)
+    {
+        return 0u;
+    }
+
+    return static_cast<uint32_t>(local_time.tm_hour) * 3600u +
+           static_cast<uint32_t>(local_time.tm_min) * 60u +
+           static_cast<uint32_t>(local_time.tm_sec);
+}
+
 void *sys_platform_allocate_psram(const size_t size)
 {
     if (size == 0u)
@@ -476,4 +545,25 @@ void *sys_platform_allocate_psram(const size_t size)
     }
 
     return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
+bool sys_platform_queue_background_task(
+    const sys_platform_background_callback_t callback,
+    void *const user_context)
+{
+    if ((callback == nullptr) || (background_task_handle == nullptr) || is_background_task_busy)
+    {
+        return false;
+    }
+
+    background_callback = callback;
+    background_context = user_context;
+    is_background_task_busy = true;
+    (void)xTaskNotifyGive(background_task_handle);
+    return true;
+}
+
+bool sys_platform_background_task_is_busy(void)
+{
+    return is_background_task_busy;
 }

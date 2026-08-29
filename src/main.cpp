@@ -16,19 +16,32 @@ ui_stop_search_t stop_search;
 fw_local_api_source_t local_api_source(
     sys_platform_http_client(), sys_platform_provider_url());
 fw_departure_list_t departures{};
+fw_departure_list_t downloaded_departures{};
+fw_city_list_t downloaded_cities{};
 fw_stop_list_t *available_stops = nullptr;
 fw_stop_t selected_stop{};
 char station_name[fw_stop_name_max_length]{};
+char download_stop_name[fw_stop_name_max_length]{};
+char download_stop_query[fw_stop_name_max_length]{};
 uint32_t last_refresh_ms = 0u;
 uint32_t last_server_check_ms = 0u;
+uint32_t last_animation_ms = 0u;
 bool shows_picker = false;
 bool shows_search = false;
 bool has_selected_stop = false;
 bool is_server_available = false;
+volatile bool has_downloaded_departures = false;
+volatile fw_result_t downloaded_departures_result = fw_result_network_error;
+volatile bool has_downloaded_cities = false;
+volatile fw_result_t downloaded_cities_result = fw_result_network_error;
+volatile bool has_downloaded_stops = false;
+volatile fw_result_t downloaded_stops_result = fw_result_network_error;
+bool is_stop_search_pending = false;
 fw_city_list_t cities{};
 const char *city_names[fw_city_capacity]{};
 size_t selected_city_index = 0u;
 static const uint32_t server_check_interval_ms = 30000u;
+static const uint32_t animation_interval_ms = 500u;
 
 typedef enum
 {
@@ -37,6 +50,10 @@ typedef enum
 } app_picker_stage_t;
 
 app_picker_stage_t picker_stage = app_picker_stage_city;
+
+void render_city_picker(bool refresh_content_only = false);
+void render_departures();
+void show_stop_results(fw_result_t result);
 
 ui_network_status_t network_status()
 {
@@ -47,43 +64,109 @@ ui_network_status_t network_status()
     };
 }
 
-fw_result_t load_cities()
+void download_cities(void *const user_context)
 {
-    if (!sys_platform_network_is_ready())
+    (void)user_context;
+    fw_city_list_t next_cities{};
+    const fw_result_t result = fw_city_catalogue_load(
+        sys_platform_http_client(), sys_platform_provider_url(), &next_cities);
+    downloaded_cities = next_cities;
+    downloaded_cities_result = result;
+    has_downloaded_cities = true;
+}
+
+void request_cities()
+{
+    if (!sys_platform_network_is_ready() || sys_platform_background_task_is_busy())
     {
-        is_server_available = false;
-        return fw_result_network_error;
+        return;
     }
 
-    const fw_result_t result = fw_city_catalogue_load(
-        sys_platform_http_client(), sys_platform_provider_url(), &cities);
+    has_downloaded_cities = false;
+    (void)sys_platform_queue_background_task(download_cities, nullptr);
+}
+
+void apply_downloaded_cities()
+{
+    if (!has_downloaded_cities)
+    {
+        return;
+    }
+
+    has_downloaded_cities = false;
+    const fw_result_t result = downloaded_cities_result;
     is_server_available = result == fw_result_ok;
     last_server_check_ms = sys_platform_millis();
     if (is_server_available)
     {
+        cities = downloaded_cities;
         for (size_t index = 0u; index < cities.count; ++index)
         {
             city_names[index] = cities.items[index].name;
         }
     }
-    return result;
+    if (shows_picker && (picker_stage == app_picker_stage_city))
+    {
+        render_city_picker();
+    }
+    else if (!has_selected_stop && !shows_search)
+    {
+        render_departures();
+    }
 }
 
-void render_city_picker()
+void render_city_picker(const bool refresh_content_only)
 {
     departures_screen.render_city_picker(
-        city_names, cities.count, stop_picker.selected_index(), stop_picker.page_index(), network_status());
+        city_names, cities.count, stop_picker.selected_index(), stop_picker.page_index(),
+        sys_platform_millis(), refresh_content_only, network_status());
 }
 
-void refresh_departures()
+void render_departures()
 {
-    if (!has_selected_stop || !sys_platform_network_is_ready())
+    departures_screen.render_departures(
+        station_name, departures, sys_platform_local_time_s(), sys_platform_millis(), network_status());
+}
+
+void download_departures(void *const user_context)
+{
+    (void)user_context;
+    fw_departure_list_t next_departures{};
+    const fw_result_t result = local_api_source.get_departures(download_stop_name, &next_departures);
+    downloaded_departures = next_departures;
+    downloaded_departures_result = result;
+    has_downloaded_departures = true;
+}
+
+void request_departures()
+{
+    if (!has_selected_stop || !sys_platform_network_is_ready() ||
+        sys_platform_background_task_is_busy())
     {
         return;
     }
 
-    departures_screen.render_loading(station_name, network_status());
-    const fw_result_t result = local_api_source.get_departures(selected_stop.name, &departures);
+    (void)snprintf(download_stop_name, sizeof(download_stop_name), "%s", selected_stop.name);
+    has_downloaded_departures = false;
+    if (!sys_platform_queue_background_task(download_departures, nullptr))
+    {
+        return;
+    }
+}
+
+void apply_downloaded_departures()
+{
+    if (!has_downloaded_departures)
+    {
+        return;
+    }
+
+    has_downloaded_departures = false;
+    const fw_result_t result = downloaded_departures_result;
+    if (result == fw_result_ok)
+    {
+        departures = downloaded_departures;
+    }
     is_server_available = result == fw_result_ok;
     char message[80u];
     (void)snprintf(
@@ -91,24 +174,51 @@ void refresh_departures()
         static_cast<unsigned int>(departures.count));
     sys_platform_debug_log(message);
     last_refresh_ms = sys_platform_millis();
+    if (has_selected_stop && !shows_picker && !shows_search)
+    {
+        render_departures();
+    }
 }
 
-fw_result_t search_stops()
+void download_stops(void *const user_context)
 {
-    if (!sys_platform_network_is_ready())
+    (void)user_context;
+    const fw_result_t result = local_api_source.find_stops(download_stop_query, available_stops);
+    downloaded_stops_result = result;
+    has_downloaded_stops = true;
+}
+
+bool request_stop_search()
+{
+    if (!sys_platform_network_is_ready() || (available_stops == nullptr) ||
+        sys_platform_background_task_is_busy())
     {
-        return fw_result_network_error;
-    }
-    if (available_stops == nullptr)
-    {
-        return fw_result_out_of_memory;
+        return false;
     }
 
+    (void)snprintf(download_stop_query, sizeof(download_stop_query), "%s", stop_search.query());
+    has_downloaded_stops = false;
+    is_stop_search_pending = sys_platform_queue_background_task(download_stops, nullptr);
+    return is_stop_search_pending;
+}
+
+void apply_downloaded_stops()
+{
+    if (!has_downloaded_stops)
+    {
+        return;
+    }
+
+    has_downloaded_stops = false;
+    is_stop_search_pending = false;
+    is_server_available = downloaded_stops_result == fw_result_ok;
+    show_stop_results(downloaded_stops_result);
+}
+
+void show_stop_searching()
+{
     departures_screen.render_message(
         cities.items[selected_city_index].name, "Szukanie...", network_status());
-    const fw_result_t result = local_api_source.find_stops(stop_search.query(), available_stops);
-    is_server_available = result == fw_result_ok;
-    return result;
 }
 
 void show_stop_results(const fw_result_t result)
@@ -119,7 +229,8 @@ void show_stop_results(const fw_result_t result)
         shows_picker = true;
         stop_picker.open();
         departures_screen.render_stop_picker(
-            *available_stops, stop_picker.selected_index(), stop_picker.page_index(), network_status());
+            *available_stops, stop_picker.selected_index(), stop_picker.page_index(),
+            sys_platform_millis(), false, network_status());
         return;
     }
 
@@ -127,7 +238,8 @@ void show_stop_results(const fw_result_t result)
     shows_picker = false;
     departures_screen.render_message(
         cities.items[selected_city_index].name,
-        result == fw_result_ok ? "Brak wynikow" : "Blad polaczenia",
+        result == fw_result_ok ? "Brak wynikow" :
+        (result == fw_result_busy ? "Poczekaj chwile" : "Blad polaczenia"),
         network_status());
     picker_stage = app_picker_stage_city;
     stop_picker.reset();
@@ -147,15 +259,10 @@ void setup()
         sys_platform_debug_log("PSRAM: brak miejsca na liste przystankow");
     }
 
-    const fw_result_t city_result = load_cities();
-    if (city_result != fw_result_ok)
-    {
-        sys_platform_debug_log("Serwer: /status niedostepny");
-    }
-
     (void)snprintf(station_name, sizeof(station_name), "%s", "Wybierz miasto");
     departures_screen.render_departures(
-        station_name, departures, sys_platform_epoch_s(), network_status());
+        station_name, departures, sys_platform_local_time_s(), sys_platform_millis(), network_status());
+    request_cities();
 }
 
 void loop()
@@ -164,6 +271,15 @@ void loop()
     const bool is_touched = sys_platform_is_touched();
     const int16_t touch_x = sys_platform_touch_x();
     const int16_t touch_y = sys_platform_touch_y();
+
+    apply_downloaded_cities();
+    apply_downloaded_stops();
+    apply_downloaded_departures();
+
+    if (is_stop_search_pending)
+    {
+        return;
+    }
 
     if (shows_search)
     {
@@ -185,7 +301,14 @@ void loop()
         else if (event == ui_stop_search_event_submitted)
         {
             shows_search = false;
-            show_stop_results(search_stops());
+            if (request_stop_search())
+            {
+                show_stop_searching();
+            }
+            else
+            {
+                show_stop_results(fw_result_busy);
+            }
         }
         return;
     }
@@ -205,7 +328,21 @@ void loop()
     }
     else if (event == ui_stop_picker_event_selected)
     {
-        if (picker_stage == app_picker_stage_city)
+        if (sys_platform_background_task_is_busy())
+        {
+            stop_picker.open();
+            if (picker_stage == app_picker_stage_city)
+            {
+                render_city_picker();
+            }
+            else if (available_stops != nullptr)
+            {
+                departures_screen.render_stop_picker(
+                    *available_stops, stop_picker.selected_index(), stop_picker.page_index(),
+                    sys_platform_millis(), false, network_status());
+            }
+        }
+        else if (picker_stage == app_picker_stage_city)
         {
             selected_city_index = stop_picker.selected_index();
             local_api_source.set_provider(
@@ -223,33 +360,52 @@ void loop()
             selected_stop = available_stops->items[stop_picker.selected_index()];
             (void)snprintf(station_name, sizeof(station_name), "%s", selected_stop.name);
             has_selected_stop = true;
-            refresh_departures();
-            departures_screen.render_departures(
-                station_name, departures, sys_platform_epoch_s(), network_status());
             shows_picker = false;
             stop_picker.reset();
+            request_departures();
+            render_departures();
         }
     }
-    else if ((event == ui_stop_picker_event_scrolled) &&
-             (picker_stage == app_picker_stage_stop) && shows_picker && (available_stops != nullptr))
+    else if ((event == ui_stop_picker_event_scrolled) && shows_picker)
     {
-        departures_screen.render_stop_picker(
-            *available_stops, stop_picker.selected_index(), stop_picker.page_index(), network_status());
-    }
-
-    if ((now_ms - last_server_check_ms) >= server_check_interval_ms)
-    {
-        (void)load_cities();
-        if (shows_picker && (picker_stage == app_picker_stage_city))
+        if (picker_stage == app_picker_stage_city)
         {
             render_city_picker();
         }
+        else if (available_stops != nullptr)
+        {
+            departures_screen.render_stop_picker(
+                *available_stops, stop_picker.selected_index(), stop_picker.page_index(),
+                sys_platform_millis(), false, network_status());
+        }
+    }
+
+    if (!sys_platform_background_task_is_busy() &&
+        ((now_ms - last_server_check_ms) >= server_check_interval_ms))
+    {
+        request_cities();
     }
 
     if (has_selected_stop && !shows_picker && ((now_ms - last_refresh_ms) >= 30000u))
     {
-        refresh_departures();
-        departures_screen.render_departures(
-            station_name, departures, sys_platform_epoch_s(), network_status());
+        request_departures();
+    }
+
+    if ((now_ms - last_animation_ms) >= animation_interval_ms)
+    {
+        last_animation_ms = now_ms;
+        if (shows_picker)
+        {
+            if (picker_stage == app_picker_stage_city)
+            {
+                render_city_picker(true);
+            }
+            else if (available_stops != nullptr)
+            {
+                departures_screen.render_stop_picker(
+                    *available_stops, stop_picker.selected_index(), stop_picker.page_index(), now_ms,
+                    true, network_status());
+            }
+        }
     }
 }

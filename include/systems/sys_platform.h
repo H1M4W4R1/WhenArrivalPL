@@ -11,6 +11,8 @@
 /* H1M4W4R1
  * This contract isolates board SDKs. A Waveshare implementation provides the
  * same functions in its own source file and never needs an M5 header. */
+typedef void (*sys_platform_background_callback_t)(void *user_context);
+
 void sys_platform_initialize(void);
 ui_display_t *sys_platform_display(void);
 driver_http_client_t *sys_platform_http_client(void);
@@ -24,6 +26,11 @@ int16_t sys_platform_network_rssi_dbm(void);
 void sys_platform_debug_log(const char *message);
 uint32_t sys_platform_millis(void);
 uint32_t sys_platform_epoch_s(void);
+uint32_t sys_platform_local_time_s(void);
 void *sys_platform_allocate_psram(size_t size);
+bool sys_platform_queue_background_task(
+    sys_platform_background_callback_t callback,
+    void *user_context);
+bool sys_platform_background_task_is_busy(void);
 
 #endif /* SYSTEMS_SYS_PLATFORM_H */

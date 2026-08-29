@@ -17,6 +17,9 @@ static const int16_t header_height = 42;
 static const int16_t picker_first_row_y = 54;
 static const int16_t picker_row_height = 34;
 static const int16_t pagination_height = 38;
+/* Change this one value to adjust the marquee pace. */
+static const uint32_t marquee_character_step_ms = 500u;
+static const int16_t marquee_gap_px = 24;
 
 uint16_t wifi_indicator_color(const ui_network_status_t &network_status)
 {
@@ -55,6 +58,40 @@ void draw_button(
         static_cast<int16_t>(rectangle.x + 4), static_cast<int16_t>(rectangle.y + 4),
         text, color_white, 2u);
 }
+
+void draw_marquee_text(
+    ui_display_t *const display,
+    const int16_t x,
+    const int16_t y,
+    const int16_t width,
+    const char *const text,
+    const uint16_t color,
+    const uint8_t text_scale,
+    const uint32_t animation_ms)
+{
+    if ((display == nullptr) || (text == nullptr) || (width <= 0) || (text_scale == 0u))
+    {
+        return;
+    }
+
+    const size_t text_length = strlen(text);
+    const int16_t character_width = static_cast<int16_t>(6 * text_scale);
+    const int16_t text_width = static_cast<int16_t>(
+        text_length * static_cast<size_t>(character_width));
+    if (text_width <= width)
+    {
+        display->draw_text(x, y, text, color, text_scale);
+        return;
+    }
+
+    const int16_t cycle_width = static_cast<int16_t>(text_width + marquee_gap_px);
+    const size_t cycle_character_count = static_cast<size_t>(cycle_width / character_width);
+    const int16_t offset = static_cast<int16_t>(
+        ((animation_ms / marquee_character_step_ms) % cycle_character_count) *
+        static_cast<uint32_t>(character_width));
+    display->draw_text(static_cast<int16_t>(x - offset), y, text, color, text_scale);
+    display->draw_text(static_cast<int16_t>(x + cycle_width - offset), y, text, color, text_scale);
+}
 }
 
 ui_departures_screen_t::ui_departures_screen_t(ui_display_t *const display) :
@@ -64,6 +101,7 @@ ui_departures_screen_t::ui_departures_screen_t(ui_display_t *const display) :
 
 void ui_departures_screen_t::render_header(
     const char *const title,
+    const uint32_t animation_ms,
     const ui_network_status_t &network_status) const
 {
     if (_display == nullptr)
@@ -72,33 +110,20 @@ void ui_departures_screen_t::render_header(
     }
 
     _display->fill_rectangle({0, 0, _display->width(), header_height}, color_dark_blue);
-    _display->draw_text(10, 13, title, color_white, 2u);
-
     const int16_t wifi_x = static_cast<int16_t>(_display->width() - 90);
     const int16_t server_x = static_cast<int16_t>(_display->width() - 42);
+    draw_marquee_text(
+        _display, 10, 13, static_cast<int16_t>(wifi_x - 16), title, color_white, 2u, animation_ms);
     _display->draw_text(wifi_x, 15, "WiFi", wifi_indicator_color(network_status), 1u);
     _display->draw_text(
         server_x, 15, "Srv", network_status.is_server_available ? color_green : color_red, 1u);
-}
-
-void ui_departures_screen_t::render_loading(
-    const char *const station_name,
-    const ui_network_status_t &network_status) const
-{
-    if (_display == nullptr)
-    {
-        return;
-    }
-
-    _display->fill_screen(color_white);
-    render_header(station_name, network_status);
-    _display->draw_text(10, 62, "Pobieranie odjazdów...", color_black, 2u);
 }
 
 void ui_departures_screen_t::render_departures(
     const char *const station_name,
     const fw_departure_list_t &departures,
     const uint32_t now_epoch_s,
+    const uint32_t animation_ms,
     const ui_network_status_t &network_status) const
 {
     if (_display == nullptr)
@@ -107,7 +132,7 @@ void ui_departures_screen_t::render_departures(
     }
 
     _display->fill_screen(color_white);
-    render_header(station_name, network_status);
+    render_header(station_name, animation_ms, network_status);
 
     if (departures.count == 0u)
     {
@@ -131,7 +156,15 @@ void ui_departures_screen_t::render_departures(
         (void)snprintf(remaining, sizeof(remaining), "%lum", static_cast<unsigned long>(remaining_seconds / 60u));
 
         _display->draw_text(8, row_y, departure.route_name, color_dark_blue, 2u);
-        _display->draw_text(68, row_y, departure.headsign, color_black, 2u);
+        const int16_t headsign_x = 68;
+        const int16_t headsign_width = static_cast<int16_t>(_display->width() - headsign_x - 54);
+        draw_marquee_text(
+            _display, headsign_x, row_y, headsign_width, departure.headsign, color_black, 2u,
+            animation_ms);
+        _display->fill_rectangle({0, row_y, 64, 22}, color_white);
+        _display->fill_rectangle(
+            {static_cast<int16_t>(_display->width() - 54), row_y, 54, 22}, color_white);
+        _display->draw_text(8, row_y, departure.route_name, color_dark_blue, 2u);
         _display->draw_text(
             static_cast<int16_t>(_display->width() - 52), row_y,
             remaining, departure.is_realtime ? color_red : color_gray, 2u);
@@ -143,6 +176,8 @@ void ui_departures_screen_t::render_city_picker(
     const size_t city_count,
     const size_t selected_index,
     const size_t page_index,
+    const uint32_t animation_ms,
+    const bool refresh_content_only,
     const ui_network_status_t &network_status) const
 {
     if ((_display == nullptr) || (city_names == nullptr))
@@ -150,9 +185,16 @@ void ui_departures_screen_t::render_city_picker(
         return;
     }
 
-    _display->fill_screen(color_white);
-    render_header("Wybierz miasto", network_status);
     const size_t visible_rows = stop_picker_visible_rows();
+    const int16_t pagination_y = static_cast<int16_t>(_display->height() - pagination_height);
+    if (!refresh_content_only)
+    {
+        _display->fill_screen(color_white);
+        render_header("Wybierz miasto", animation_ms, network_status);
+    }
+    _display->fill_rectangle(
+        {0, picker_first_row_y, _display->width(),
+         static_cast<int16_t>(pagination_y - picker_first_row_y)}, color_white);
     if (city_count == 0u)
     {
         _display->draw_text(10, picker_first_row_y, "Brak miast", color_black, 2u);
@@ -165,12 +207,17 @@ void ui_departures_screen_t::render_city_picker(
         const size_t visible_index = index - first_index;
         const int16_t row_y = static_cast<int16_t>(54 + visible_index * 34u);
         const uint16_t color = index == selected_index ? color_dark_blue : color_black;
-        _display->draw_text(10, row_y, city_names[index], color, 2u);
+        draw_marquee_text(
+            _display, 10, row_y, static_cast<int16_t>(_display->width() - 20), city_names[index],
+            color, 2u, animation_ms);
     }
 
     const size_t page_count = city_count == 0u ? 1u :
         (city_count + visible_rows - 1u) / visible_rows;
-    const int16_t pagination_y = static_cast<int16_t>(_display->height() - pagination_height);
+    if (refresh_content_only)
+    {
+        return;
+    }
     const int16_t button_width = static_cast<int16_t>(_display->width() / 3);
     draw_button(_display, {0, pagination_y, button_width, pagination_height}, "<", color_dark_blue);
     draw_button(
@@ -190,6 +237,8 @@ void ui_departures_screen_t::render_stop_picker(
     const fw_stop_list_t &stops,
     const size_t selected_index,
     const size_t page_index,
+    const uint32_t animation_ms,
+    const bool refresh_content_only,
     const ui_network_status_t &network_status) const
 {
     if (_display == nullptr)
@@ -197,8 +246,15 @@ void ui_departures_screen_t::render_stop_picker(
         return;
     }
 
-    _display->fill_screen(color_white);
-    render_header("Przystanek", network_status);
+    const int16_t pagination_y = static_cast<int16_t>(_display->height() - pagination_height);
+    if (!refresh_content_only)
+    {
+        _display->fill_screen(color_white);
+        render_header("Przystanek", animation_ms, network_status);
+    }
+    _display->fill_rectangle(
+        {0, picker_first_row_y, _display->width(),
+         static_cast<int16_t>(pagination_y - picker_first_row_y)}, color_white);
     if (stops.count == 0u)
     {
         _display->draw_text(10, 62, "Brak przystankow", color_black, 2u);
@@ -215,11 +271,16 @@ void ui_departures_screen_t::render_stop_picker(
         const int16_t row_y = static_cast<int16_t>(
             picker_first_row_y + visible_index * static_cast<size_t>(picker_row_height));
         const uint16_t color = index == selected_index ? color_dark_blue : color_black;
-        _display->draw_text(10, row_y, stops.items[index].name, color, 2u);
+        draw_marquee_text(
+            _display, 10, row_y, static_cast<int16_t>(_display->width() - 20), stops.items[index].name,
+            color, 2u, animation_ms);
     }
 
     const size_t page_count = (stops.count + visible_rows - 1u) / visible_rows;
-    const int16_t pagination_y = static_cast<int16_t>(_display->height() - pagination_height);
+    if (refresh_content_only)
+    {
+        return;
+    }
     const int16_t button_width = static_cast<int16_t>(_display->width() / 3);
     draw_button(_display, {0, pagination_y, button_width, pagination_height}, "<", color_dark_blue);
     draw_button(
@@ -246,7 +307,7 @@ void ui_departures_screen_t::render_stop_search(
     }
 
     _display->fill_screen(color_white);
-    render_header("Szukaj przystanku", network_status);
+    render_header("Szukaj przystanku", 0u, network_status);
     _display->draw_text(8, 52, query[0u] == '\0' ? "Wpisz nazwe" : query, color_black, 2u);
 
     if (has_full_keyboard)
@@ -339,6 +400,6 @@ void ui_departures_screen_t::render_message(
     }
 
     _display->fill_screen(color_white);
-    render_header(title, network_status);
+    render_header(title, 0u, network_status);
     _display->draw_text(10, 62, message, color_black, 2u);
 }

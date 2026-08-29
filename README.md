@@ -46,6 +46,8 @@ Po wyborze przystanku ekran odświeża odjazdy co 30 sekund. W nagłówku `WiFi`
 
 Lista miast jest pobierana przy starcie i co 30 sekund z `GET /status`. Aktualne API zwraca slugi providerów, więc są one używane jako nazwy, chyba że odpowiedź zawiera opcjonalne pole `city`. Długie listy miast i przystanków mają strony; użyj przycisków `<` i `>` na dole ekranu.
 
+Nazwy miast, przystanków, kierunków i wybranego przystanku przewijają się poziomo, gdy nie mieszczą się na ekranie. Czas jest synchronizowany z NTP i wyświetlany według strefy Polski (`CET`/`CEST`); odjazdy są pobierane w zadaniu tła, więc poprzedni rozkład pozostaje widoczny podczas odświeżania.
+
 ## Architektura
 
 `operation/` nie zna M5Stack, Arduino ani konkretnego wyświetlacza:
