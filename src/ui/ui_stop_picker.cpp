@@ -137,6 +137,11 @@ bool ui_stop_picker_t::is_open() const
     return _is_open;
 }
 
+bool ui_stop_picker_t::is_interacting() const
+{
+    return _is_open || _was_touched;
+}
+
 size_t ui_stop_picker_t::selected_index() const
 {
     return _selected_index;

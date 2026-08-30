@@ -35,6 +35,7 @@ public:
     void open();
     void reopen();
     bool is_open() const;
+    bool is_interacting() const;
     size_t selected_index() const;
     size_t page_index() const;
     void select_next(size_t item_count);
