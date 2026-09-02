@@ -1,10 +1,10 @@
-# MojaStacja
+# WhenArrivalPL
 
-Firmware tablicy najbliższych odjazdów dla ESP32 i ekranów dotykowych. Dane pobiera wyłącznie z lokalnego serwera [IOT Open API](../IOTOpenAPI/README.md); płyta nie łączy się bezpośrednio z publicznymi serwisami komunikacji.
+Firmware tablicy najbliższych odjazdów dla ESP32 i ekranów dotykowych. Dane pobiera wyłącznie z lokalnego serwera [WhenArrivalPL_API](https://github.com/H1M4W4R1/WhenArrivalPL_API); płyta nie łączy się bezpośrednio z publicznymi serwisami komunikacji.
 
 ## Uruchomienie — 5 minut
 
-1. Uruchom serwer w sieci lokalnej, np. `iot-open-api --provider gdansk`.
+1. Uruchom serwer w sieci lokalnej, np. `wa-api --provider gdansk`.
 2. Wybierz konfigurację: skopiuj `include/secrets.h.example` jako `include/secrets.h` **albo** umieść `config.json` w katalogu głównym karty microSD.
 3. Ustaw Wi-Fi i adres serwera zgodnie z przykładem poniżej.
 4. Zbuduj program: `pio run -e m5stack-cores3` albo `pio run -e m5stack-tab5`.
